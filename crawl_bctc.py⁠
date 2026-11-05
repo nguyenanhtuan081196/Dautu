@@ -1,0 +1,125 @@
+import os
+import json
+import time
+import subprocess
+import datetime
+from vnstock import Fundamental
+
+OUTPUT_DIR = "bctc_data"
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
+
+# Danh sách chuẩn VN100
+VN100_SYMBOLS = [
+    "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
+    "MBB", "MSN", "MWG", "PLX", "POW", "SAB", "SHB", "SSB", "SSI", "STB",
+    "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE",
+    "VCI", "HCM", "VIX", "MBS", "FTS", "BSI", "CTS", "ORS", "NVL", "PDR",
+    "DIG", "NLG", "KDH", "CEO", "DXG", "TCH", "HDG", "KBC", "IDC", "SZC",
+    "PHR", "HSG", "NKG", "CTD", "VCG", "HHV", "PNJ", "FRT", "PVD", "PVS",
+    "BSR", "REE", "PC1", "NT2", "GMD", "HAH", "PVT", "HVN", "VHC", "ANV",
+    "APH", "ASM", "DBC", "DCM", "DPM", "GEX", "KDC", "LIG", "MSH", "PAN",
+    "SBT", "TCD", "TLG", "VDP", "VPG", "VTO", "DHC", "IMP", "SBA", "SJS",
+    "TID", "VPI", "DRC", "CSM", "BMP", "NTC", "DHG", "VOS", "HAG"
+]
+
+VN100_SYMBOLS = sorted(list(set(VN100_SYMBOLS)))
+
+def fetch_financial_reports(symbol):
+    try:
+        file_path = os.path.join(OUTPUT_DIR, f"{symbol.lower()}.json")
+        
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+        fun = Fundamental()
+        stock_obj = fun.equity(symbol)
+        
+        # 1. Cào Bảng cân đối kế toán
+        df_balance = stock_obj.balance_sheet(period='quarter')
+        # 2. Cào Báo cáo kết quả kinh doanh
+        df_income = stock_obj.income_statement(period='quarter')
+        
+        # 3. Cào Báo cáo lưu chuyển tiền tệ (QUAN TRỌNG: Lấy dữ liệu Dòng tiền CFO)
+        df_cashflow = None
+        try:
+            df_cashflow = stock_obj.cash_flow(period='quarter')
+        except Exception as e:
+            print(f"⚠️ Không lấy được bảng Cash Flow cho {symbol}: {e}")
+        
+        reports = {}
+        if df_balance is not None and not df_balance.empty:
+            reports['balance_sheet'] = df_balance.to_dict(orient="records")
+        if df_income is not None and not df_income.empty:
+            reports['income_statement'] = df_income.to_dict(orient="records")
+        if df_cashflow is not None and not df_cashflow.empty:
+            reports['cash_flow'] = df_cashflow.to_dict(orient="records")
+            
+        if not reports:
+            print(f"⚠️ Không có dữ liệu BCTC cho mã: {symbol}")
+            return False
+
+        reports['updated_at'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(reports, f, ensure_ascii=False, indent=4)
+        
+        print(f"✅ Đã tải và làm mới BCTC đầy đủ (kèm Cash Flow) cho mã: {symbol} -> {symbol.lower()}.json")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Lỗi mã {symbol}: {e}")
+        return False
+
+def auto_git_push_bctc(target_symbols):
+    try:
+        print("\n📤 Đang tự động đồng bộ thư mục 'bctc_data' lên GitHub...")
+        subprocess.run(["git", "add", "bctc_data/"], check=True)
+        
+        commit_msg = f"Auto update full BCTC data (with Cash Flow) - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        subprocess.run(["git", "commit", "-m", commit_msg], check=True)
+        subprocess.run(["git", "push"], check=True)
+        print("🚀 Đẩy dữ liệu BCTC lên GitHub thành công!")
+    except Exception as e:
+        print(f"ℹ️ Git push info: {e}")
+
+
+def main():
+    print("==================================================")
+    print("   CÀO ĐẦY ĐỦ BÁO CÁO TÀI CHÍNH (KÈM LƯU CHUYỂN TIỀN TỆ)")
+    print("==================================================")
+    print("1. Cào TOÀN BỘ danh sách VN100")
+    print("2. Cào MỘT NHÓM MÃ hoặc MÃ LẺ (Tùy chọn)")
+    
+    mode_choice = input("Nhập lựa chọn của bạn (1/2, mặc định 2): ").strip()
+    
+    target_symbols = []
+    if mode_choice == '1':
+        target_symbols = VN100_SYMBOLS
+        print("-> Đã chọn chế độ cào toàn bộ danh sách VN100.")
+    else:
+        raw_input_symbols = input("Nhập mã cần cào (cách nhau bởi dấu phẩy, VD: FPT,MWG,HPG): ").strip()
+        if raw_input_symbols:
+            target_symbols = [s.strip().upper() for s in raw_input_symbols.split(",") if s.strip()]
+            print(f"-> Đã chọn cào các mã: {target_symbols}")
+        else:
+            target_symbols = ["FPT"]
+            print("⚠️ Không nhận được mã hợp lệ, mặc định cào mã: FPT")
+
+    total = len(target_symbols)
+    print(f"\n🚀 Bắt đầu lấy dữ liệu BCTC qua vnstock v5 cho {total} mã...")
+    
+    successful_symbols = []
+    for i, symbol in enumerate(target_symbols):
+        print(f"[{i+1}/{total}] Xử lý: {symbol}...")
+        if fetch_financial_reports(symbol):
+            successful_symbols.append(symbol)
+        time.sleep(0.4)
+        
+    print(f"\n🎉 Hoàn tất! Đã làm mới thành công {len(successful_symbols)}/{total} file BCTC.")
+    
+    if successful_symbols:
+        auto_git_push_bctc(successful_symbols)
+
+if __name__ == "__main__":
+    main()
