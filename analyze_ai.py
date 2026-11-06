@@ -368,12 +368,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
-
-📝 Những thay đổi em đã làm:
-
-1. Biến API Key: Đổi thành GEMINI_API_KEY.
-2. URL API: Trỏ thẳng tới máy chủ Google (generativelanguage.googleapis.com...).
-3. Model: Đổi thành "gemini-2.5-flash" (model miễn phí quyền lực nhất hiện tại).
-4. Thời gian chờ (Timeout): Em tăng từ 120 lên 180 giây, vì Gemini đôi khi trả lời hơi lâu hơn.
-5. Thời gian nghỉ (Sleep): Em tăng thời gian nghỉ mặc định giữa các mã lên 4.0 giây để tránh bị Gemini chặn do gửi request quá nhanh (Rate Limit).
