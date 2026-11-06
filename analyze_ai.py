@@ -154,13 +154,11 @@ def analyze_stock_with_ai(symbol, stock_metrics, screener_item, sector):
     """
 
     headers = {
-        # ĐÃ SỬA: Dùng biến GEMINI_API_KEY
         "Authorization": f"Bearer {GEMINI_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        # ĐÃ SỬA: Đổi sang model Gemini 2.5 Flash
-       "model": "gemini-3.8-flash"
+        "model": "gemini-3.8-flash",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2
     }
