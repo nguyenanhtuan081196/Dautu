@@ -8,12 +8,9 @@ import argparse
 SCREENER_FILE = "screener_results.json"
 DATA_FILE = "data.json"
 
-# ĐÃ SỬA: Đổi sang biến môi trường của Gemini
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+ALIBABA_API_KEY = os.getenv("ALIBABA_API_KEY", "").strip()
 INPUT_SYMBOLS = os.getenv("INPUT_SYMBOLS", "").strip()
-
-# ĐÃ SỬA: Đổi URL API sang định dạng OpenAI-compatible của Google Gemini
-API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+API_URL = "https://ws-8lcqaxwxdv0h9xzy.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 RESUME_DAYS = 7
 
@@ -45,13 +42,15 @@ SECTOR_MAPPING = {
     ]
 }
 
-TOP_PER_SECTOR = 5
+TOP_PER_SECTOR = 5  # số mã top đầu mỗi ngành (giống logic cũ)
+
 
 def get_sector(symbol):
     for sector, symbols in SECTOR_MAPPING.items():
         if symbol in symbols:
             return sector
     return "SAN_XUAT_TIEU_DUNG_PHONG_THU"
+
 
 def is_recently_analyzed(stock_metrics, days=RESUME_DAYS):
     ts_str = stock_metrics.get("ai_updated_at", "")
@@ -63,10 +62,10 @@ def is_recently_analyzed(stock_metrics, days=RESUME_DAYS):
         return False
     return (time.time() - ts) < days * 24 * 3600
 
+
 def analyze_stock_with_ai(symbol, stock_metrics, screener_item, sector):
-    # ĐÃ SỬA: Kiểm tra biến môi trường GEMINI_API_KEY
-    if not GEMINI_API_KEY:
-        print(f"❌ LỖI: Biến môi trường GEMINI_API_KEY đang trống! Hãy set biến này trước khi chạy.")
+    if not ALIBABA_API_KEY:
+        print(f"❌ LỖI: Biến môi trường ALIBABA_API_KEY đang trống!")
         return None
 
     close_price = stock_metrics.get('close', stock_metrics.get('close_price', 0))
@@ -154,22 +153,20 @@ def analyze_stock_with_ai(symbol, stock_metrics, screener_item, sector):
     """
 
     headers = {
-        "Authorization": f"Bearer {GEMINI_API_KEY}",
+        "Authorization": f"Bearer {ALIBABA_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "gemini-3.8-flash",
+        "model": "qwen3.7-max",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2
     }
 
     for attempt in range(3):
         try:
-            # Tăng timeout lên một chút vì Gemini có thể xử lý prompt dài hơi lâu
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=120)
             if response.status_code == 200:
                 content = response.json()["choices"][0]["message"]["content"].strip()
-                # Làm sạch các ký tự markdown thừa
                 content = re.sub(r"^```json\s*", "", content)
                 content = re.sub(r"^```\s*", "", content)
                 content = re.sub(r"\s*```$", "", content)
@@ -185,7 +182,7 @@ def analyze_stock_with_ai(symbol, stock_metrics, screener_item, sector):
 
                 return parsed_data
             else:
-                print(f"[{symbol}] Lỗi HTTP {response.status_code}: {response.text}")
+                print(f"[{symbol}] Lỗi HTTP {response.status_code}")
                 break
         except requests.exceptions.Timeout:
             print(f"[{symbol}] ⏳ Timeout lần {attempt + 1}/3, thử lại...")
@@ -198,6 +195,11 @@ def analyze_stock_with_ai(symbol, stock_metrics, screener_item, sector):
 
 
 def build_target_lists(screener_map):
+    """
+    Trả về (top_symbols, remaining_symbols):
+    - top_symbols: dict symbol -> sector, các mã top đầu mỗi ngành (chạy không chia batch)
+    - remaining_symbols: dict symbol -> sector, phần còn lại (chia batch)
+    """
     industry_groups = {}
     for symbol, item in screener_map.items():
         sector = get_sector(symbol)
@@ -220,6 +222,10 @@ def build_target_lists(screener_map):
         print(f"📌 Nhóm ngành [{sector}] - Top {TOP_PER_SECTOR}: {[i['symbol'] for i in items_sorted[:TOP_PER_SECTOR]]}")
 
     remaining_symbols = {}
+    for symbol, sector in industry_groups.items():
+        for item in sector:
+            pass
+    # xây remaining: tất cả mã trong screener_map mà không nằm trong top
     for symbol, item in screener_map.items():
         if symbol not in top_symbols:
             remaining_symbols[symbol] = get_sector(symbol)
@@ -233,10 +239,12 @@ def save_db(stock_db):
 
 
 def run_group(symbols_dict, label, stock_db, screener_map, sleep_time):
+    """Chạy AI cho một nhóm mã và ghi kết quả ngay sau mỗi mã."""
     if not symbols_dict:
         print(f"⚠️ Nhóm [{label}] rỗng, bỏ qua.")
         return 0
 
+    # Sắp xếp ổn định
     symbols_sorted = sorted(symbols_dict.keys())
     total = len(symbols_sorted)
     count = 0
@@ -271,6 +279,7 @@ def run_group(symbols_dict, label, stock_db, screener_map, sleep_time):
         else:
             print(f"  -> ❌ Lỗi AI")
 
+        # Ghi ngay sau mỗi mã để tránh mất dữ liệu khi bị ngắt
         save_db(stock_db)
         time.sleep(sleep_time)
 
@@ -289,8 +298,8 @@ def main():
                         help=f"Bỏ qua mã đã phân tích trong N ngày gần đây. Mặc định {RESUME_DAYS}.")
     parser.add_argument("--force", action="store_true",
                         help="Bỏ qua cơ chế resume.")
-    parser.add_argument("--sleep", type=float, default=4.0,
-                        help="Thời gian nghỉ giữa các mã (giây). Mặc định 4 để tránh bị Gemini chặn Rate Limit.")
+    parser.add_argument("--sleep", type=float, default=3.0,
+                        help="Thời gian nghỉ giữa các mã (giây). Mặc định 3.")
     args = parser.parse_args()
 
     if not os.path.exists(SCREENER_FILE) or not os.path.exists(DATA_FILE):
@@ -304,6 +313,7 @@ def main():
 
     screener_map = {item.get('symbol'): item for item in screener_data if item.get('close_price', 0) > 0}
 
+    # Nếu có INPUT_SYMBOLS, dùng nó làm danh sách top và bỏ qua phần còn lại
     if INPUT_SYMBOLS:
         custom_list = [s.strip().upper() for s in INPUT_SYMBOLS.split(",") if s.strip()]
         print(f"🎯 INPUT_SYMBOLS: {custom_list}")
@@ -312,6 +322,7 @@ def main():
         print(f"\n🎉 Hoàn thành: {count} mã.")
         return
 
+    # Xác định top và remaining
     print("=" * 60)
     print("PHÂN LOẠI MÃ: TOP ĐẦU MỖI NGÀNH vs PHẦN CÒN LẠI")
     print("=" * 60)
@@ -320,6 +331,7 @@ def main():
     print(f"\n🔝 Top đầu: {len(top_symbols)} mã")
     print(f"📦 Còn lại: {len(remaining_symbols)} mã")
 
+    # Lọc resume
     if not args.force and args.resume_days > 0:
         top_before = len(top_symbols)
         top_symbols = {s: sec for s, sec in top_symbols.items()
@@ -341,6 +353,7 @@ def main():
 
     if args.mode in ("rest", "all"):
         if remaining_symbols:
+            # Chia batch phần còn lại
             remaining_sorted = sorted(remaining_symbols.keys())
             total_rem = len(remaining_sorted)
 
