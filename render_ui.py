@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 from datetime import datetime
 from simulator import run_complex_backtest_simulation
@@ -7,32 +7,24 @@ OUTPUT_HTML = "index.html"
 LAST_UPDATE_FILE = "last_update.json"
 
 
-# ============================================================
-# FIREBASE CONFIG — đọc từ 1 secret duy nhất FIREBASE_CONFIG
-# ============================================================
 def get_firebase_config():
-    """Đọc toàn bộ Firebase config từ 1 secret JSON duy nhất (env FIREBASE_CONFIG)."""
     raw = os.environ.get("FIREBASE_CONFIG", "").strip()
     if not raw:
         print("⚠️ Thiếu secret FIREBASE_CONFIG — dùng config rỗng.")
         return {}
-
     try:
         config = json.loads(raw)
     except json.JSONDecodeError as e:
         print(f"❌ FIREBASE_CONFIG không phải JSON hợp lệ: {e}")
         return {}
-
     required = ["apiKey", "authDomain", "projectId", "appId"]
     missing = [k for k in required if not config.get(k)]
     if missing:
         print(f"⚠️ FIREBASE_CONFIG thiếu key: {', '.join(missing)}")
-
     return config
 
 
 def get_last_update_string():
-    """Đọc mốc thời gian cào dữ liệu thực tế từ file last_update.json"""
     if os.path.exists(LAST_UPDATE_FILE):
         try:
             with open(LAST_UPDATE_FILE, "r", encoding="utf-8") as f:
@@ -45,19 +37,15 @@ def get_last_update_string():
 
 
 def generate_html():
-    # 1) Chạy mô phỏng (giữ nguyên logic simulator của bạn)
     sim_data = run_complex_backtest_simulation()
     print("📊 Đã tính toán xong lãi suất lịch sử cho các mã cổ phiếu.")
 
-    # 2) Lấy mốc thời gian cập nhật
     last_update_str = get_last_update_string()
     print(f"🕒 Mốc thời gian cập nhật dữ liệu: {last_update_str}")
 
-    # 3) Lấy firebase config từ secret (env)
     firebase_config = get_firebase_config()
     firebase_config_json = json.dumps(firebase_config, ensure_ascii=False)
 
-    # 4) Template HTML (giữ nguyên như bản gốc, chỉ 2 placeholder)
     html_template = r"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -187,10 +175,11 @@ def generate_html():
                            <th class="p-3">Email</th>
                            <th class="p-3">Hạn sử dụng</th>
                            <th class="p-3">Quyền</th>
+                           <th class="p-3 text-right">Hành động</th>
                           </tr>
                          </thead>
                         <tbody id="admin-users-list" class="divide-y divide-slate-800">
-                            <tr><td colspan="3" class="p-4 text-center text-slate-500">Đang tải danh sách...</td></tr>
+                            <tr><td colspan="4" class="p-4 text-center text-slate-500">Đang tải danh sách...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -728,13 +717,13 @@ def generate_html():
         async function openAdminModal() {
             document.getElementById('admin-modal').classList.remove('hidden');
             const listEl = document.getElementById('admin-users-list');
-            listEl.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-500"><i class="fa-solid fa-spinner spinner mr-2"></i>Đang tải danh sách...</td></tr>`;
+            listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500"><i class="fa-solid fa-spinner spinner mr-2"></i>Đang tải danh sách...</td></tr>`;
 
             try {
                 const snapshot = await db.collection('allowed_users').get();
                 listEl.innerHTML = '';
                 if (snapshot.empty) {
-                    listEl.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-400">Chưa có người dùng nào.</td></tr>`;
+                    listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">Chưa có người dùng nào.</td></tr>`;
                     return;
                 }
                 snapshot.forEach(doc => {
@@ -746,11 +735,36 @@ def generate_html():
                         <td class="p-3 font-semibold text-white">${data.email || doc.id}</td>
                         <td class="p-3 text-slate-300">${expDate ? expDate.toLocaleDateString('vi-VN') : '—'}</td>
                         <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${data.role === 'admin' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">${data.role || 'user'}</span></td>
+                        <td class="p-3 text-right">
+                            <button onclick="extendUser('${doc.id}')" class="text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3">+30 Ngày</button>
+                            <button onclick="deleteUser('${doc.id}')" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Xóa</button>
+                        </td>
                     `;
                     listEl.appendChild(tr);
                 });
             } catch (err) {
-                listEl.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-rose-400">Không có quyền truy cập danh sách.</td></tr>`;
+                listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">Không có quyền truy cập danh sách.</td></tr>`;
+            }
+        }
+
+        async function extendUser(email) {
+            const docRef = db.collection('allowed_users').doc(email);
+            const doc = await docRef.get();
+            if (doc.exists) {
+                let currentExpire = parseDate(doc.data().expiresAt) || new Date();
+                if (currentExpire < new Date()) currentExpire = new Date();
+                currentExpire.setDate(currentExpire.getDate() + 30);
+                await docRef.update({ expiresAt: currentExpire.toISOString() });
+                alert(`Đã gia hạn +30 ngày cho ${email}`);
+                openAdminModal();
+            }
+        }
+
+        async function deleteUser(email) {
+            if (confirm(`Bạn có chắc chắn muốn xóa tài khoản ${email}?`)) {
+                await db.collection('allowed_users').doc(email).delete();
+                alert(`Đã xóa ${email}`);
+                openAdminModal();
             }
         }
 
@@ -1584,11 +1598,9 @@ def generate_html():
 </html>
 """
 
-    # 5) Inject config + thời gian vào template
     html_content = html_template.replace("{firebase_config_json_placeholder}", firebase_config_json)
     html_content = html_content.replace("{last_update_str}", last_update_str)
 
-    # 6) Ghi file
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_content)
 
