@@ -127,10 +127,11 @@
                            <th class="p-3">Email</th>
                            <th class="p-3">Hạn sử dụng</th>
                            <th class="p-3">Quyền</th>
+                           <th class="p-3 text-right">Hành động</th>
                           </tr>
                          </thead>
                         <tbody id="admin-users-list" class="divide-y divide-slate-800">
-                            <tr><td colspan="3" class="p-4 text-center text-slate-500">Đang tải danh sách...</td></tr>
+                            <tr><td colspan="4" class="p-4 text-center text-slate-500">Đang tải danh sách...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -179,7 +180,7 @@
                 </div>
                 <div>
                     <h1 class="text-base md:text-lg font-bold tracking-wide text-white">Pro Quant Screener</h1>
-                    <p class="text-[10px] text-slate-400">Hệ thống chấm điểm đặc thù theo Nhóm ngành | <span class="text-emerald-400 font-semibold"><i class="fa-regular fa-clock mr-1"></i>Cập nhật giá: 05/11/2026 09:34:04</span></p>
+                    <p class="text-[10px] text-slate-400">Hệ thống chấm điểm đặc thù theo Nhóm ngành | <span class="text-emerald-400 font-semibold"><i class="fa-regular fa-clock mr-1"></i>Cập nhật giá: {last_update_str}</span></p>
                 </div>
             </div>
 
@@ -492,7 +493,7 @@
             </div>
 
             <div class="bg-slate-950 px-3 py-2 border-t border-slate-800 flex justify-between items-center text-xs">
-                <span class="text-slate-400"><i class="fa-regular fa-clock mr-1 text-emerald-400"></i> Giá cập nhật lần cuối: <strong class="text-white">05/11/2026 09:34:04</strong></span>
+                <span class="text-slate-400"><i class="fa-regular fa-clock mr-1 text-emerald-400"></i> Giá cập nhật lần cuối: <strong class="text-white">{last_update_str}</strong></span>
                 <div class="flex gap-2">
                     <button type="button" id="btn-view-ai" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition font-semibold flex items-center gap-1.5">
                         <i class="fa-solid fa-robot"></i> Xem AI chi tiết
@@ -668,13 +669,13 @@
         async function openAdminModal() {
             document.getElementById('admin-modal').classList.remove('hidden');
             const listEl = document.getElementById('admin-users-list');
-            listEl.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-500"><i class="fa-solid fa-spinner spinner mr-2"></i>Đang tải danh sách...</td></tr>`;
+            listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500"><i class="fa-solid fa-spinner spinner mr-2"></i>Đang tải danh sách...</td></tr>`;
 
             try {
                 const snapshot = await db.collection('allowed_users').get();
                 listEl.innerHTML = '';
                 if (snapshot.empty) {
-                    listEl.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-400">Chưa có người dùng nào.</td></tr>`;
+                    listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">Chưa có người dùng nào.</td></tr>`;
                     return;
                 }
                 snapshot.forEach(doc => {
@@ -686,11 +687,36 @@
                         <td class="p-3 font-semibold text-white">${data.email || doc.id}</td>
                         <td class="p-3 text-slate-300">${expDate ? expDate.toLocaleDateString('vi-VN') : '—'}</td>
                         <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${data.role === 'admin' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">${data.role || 'user'}</span></td>
+                        <td class="p-3 text-right">
+                            <button onclick="extendUser('${doc.id}')" class="text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3">+30 Ngày</button>
+                            <button onclick="deleteUser('${doc.id}')" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Xóa</button>
+                        </td>
                     `;
                     listEl.appendChild(tr);
                 });
             } catch (err) {
-                listEl.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-rose-400">Không có quyền truy cập danh sách.</td></tr>`;
+                listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">Không có quyền truy cập danh sách.</td></tr>`;
+            }
+        }
+
+        async function extendUser(email) {
+            const docRef = db.collection('allowed_users').doc(email);
+            const doc = await docRef.get();
+            if (doc.exists) {
+                let currentExpire = parseDate(doc.data().expiresAt) || new Date();
+                if (currentExpire < new Date()) currentExpire = new Date();
+                currentExpire.setDate(currentExpire.getDate() + 30);
+                await docRef.update({ expiresAt: currentExpire.toISOString() });
+                alert(`Đã gia hạn +30 ngày cho ${email}`);
+                openAdminModal();
+            }
+        }
+
+        async function deleteUser(email) {
+            if (confirm(`Bạn có chắc chắn muốn xóa tài khoản ${email}?`)) {
+                await db.collection('allowed_users').doc(email).delete();
+                alert(`Đã xóa ${email}`);
+                openAdminModal();
             }
         }
 
@@ -810,7 +836,7 @@
                         pe: extraData.pe !== undefined ? extraData.pe : item.pe,
                         pb: extraData.pb !== undefined ? extraData.pb : item.pb,
                         roe: extraData.roe !== undefined ? extraData.roe : item.roe,
-                        roa: extraData.roa !== undefined ? extraData.roa : item.roa,
+                        roa: extraData.roa !== undefined ? extraData.roe : item.roa,
                         cfo_latest: extraData.cfo_latest !== undefined ? extraData.cfo_latest : (item.cfo_latest || 0),
                         debt_to_equity: extraData.debt_to_equity !== undefined ? extraData.debt_to_equity : (item.debt_to_equity || 0),
                         gross_margin: extraData.gross_margin !== undefined ? extraData.gross_margin : (item.gross_margin || 0),
