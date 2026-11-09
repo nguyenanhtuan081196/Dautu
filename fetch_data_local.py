@@ -1,4 +1,4 @@
-import os
+﻿import os
 import datetime
 import time
 import json
@@ -27,7 +27,6 @@ VN100_SYMBOLS = [
 ]
 VN100_SYMBOLS = sorted(list(set(VN100_SYMBOLS)))
 
-# Hardcode tên công ty đầy đủ cho các mã VN100
 COMPANY_NAMES = {
     "ACB": "Ngân hàng TMCP Á Châu",
     "BCM": "Tổng Công ty Đầu tư và Phát triển Công nghiệp - CTCP (Becamex IDC)",
@@ -149,17 +148,13 @@ def get_vndirect_ratio(symbol, ratio_code):
         if r.status_code == 200:
             data = r.json().get("data", [])
             if data:
-                return float(data[0].get("value", 0))
+                return float(data[0].get("value", 0) or 0)
     except Exception:
         pass
     return 0
 
 
 def get_company_overview(symbol, close_price=0):
-    """
-    Lấy tên doanh nghiệp trực tiếp từ từ điển hardcode COMPANY_NAMES (không gọi API).
-    Lấy số cổ phiếu và vốn hóa từ VNDirect API.
-    """
     company_name = COMPANY_NAMES.get(symbol, symbol)
     total_shares = 0
     market_cap = 0
@@ -243,7 +238,7 @@ def aggregate_candles(data, interval):
 
 
 def fetch_history_with_fallback(symbol, start_date, end_date):
-    sources = ['TCBS', 'VCI']
+    sources = ['VCI', 'KBS']  # Sửa TCBS thành KBS
     for src in sources:
         for attempt in range(2):
             try:
@@ -276,6 +271,8 @@ def parse_bctc_history(symbol):
     bs_dict = {}
     for item in balance_sheet:
         p = item.get("period")
+        if p is None:
+            continue
         if p not in bs_dict:
             bs_dict[p] = {}
         bs_dict[p][item.get("id")] = item.get("value")
@@ -283,6 +280,8 @@ def parse_bctc_history(symbol):
     is_dict = {}
     for item in income_statement:
         p = item.get("period")
+        if p is None:
+            continue
         if p not in is_dict:
             is_dict[p] = {}
         is_dict[p][item.get("id")] = item.get("value")
@@ -293,24 +292,32 @@ def parse_bctc_history(symbol):
 
     bctc_records = []
     for idx, curr_p in enumerate(periods):
+        if curr_p is None or "-" not in curr_p:
+            continue
+            
         prev_p = periods[idx + 1] if idx + 1 < len(periods) else None
-        year, q_str = curr_p.split("-")
+        
+        try:
+            year, q_str = curr_p.split("-")
+        except ValueError:
+            continue
+            
         yoy_p = f"{int(year) - 1}-{q_str}"
 
-        total_assets = bs_dict[curr_p].get("BS_TOTAL_ASSETS", bs_dict[curr_p].get("TOTAL_ASSETS", 0))
-        loans = bs_dict[curr_p].get("BS_LOANS_TO_CUSTOMERS", 0)
-        equity = bs_dict[curr_p].get("BS_EQUITY", bs_dict[curr_p].get("EQUITY", 0))
+        total_assets = bs_dict[curr_p].get("BS_TOTAL_ASSETS", bs_dict[curr_p].get("TOTAL_ASSETS", 0)) or 0
+        loans = bs_dict[curr_p].get("BS_LOANS_TO_CUSTOMERS", 0) or 0
+        equity = bs_dict[curr_p].get("BS_EQUITY", bs_dict[curr_p].get("EQUITY", 0)) or 0
 
-        nii = is_dict[curr_p].get("IS_NET_INTEREST_INCOME", 0)
-        pat = is_dict[curr_p].get("IS_NET_PROFIT_AFTER_TAX", is_dict[curr_p].get("NET_PROFIT_AFTER_TAX", 0))
+        nii = is_dict[curr_p].get("IS_NET_INTEREST_INCOME", 0) or 0
+        pat = is_dict[curr_p].get("IS_NET_PROFIT_AFTER_TAX", is_dict[curr_p].get("NET_PROFIT_AFTER_TAX", 0)) or 0
 
-        loans_prev = bs_dict.get(prev_p, {}).get("BS_LOANS_TO_CUSTOMERS", 0) if prev_p else 0
-        loans_yoy = bs_dict.get(yoy_p, {}).get("BS_LOANS_TO_CUSTOMERS", 0)
+        loans_prev = (bs_dict.get(prev_p, {}).get("BS_LOANS_TO_CUSTOMERS", 0) or 0) if prev_p else 0
+        loans_yoy = bs_dict.get(yoy_p, {}).get("BS_LOANS_TO_CUSTOMERS", 0) or 0
         credit_growth_qoq = ((loans - loans_prev) / loans_prev * 100) if loans_prev else 0
         credit_growth_yoy = ((loans - loans_yoy) / loans_yoy * 100) if loans_yoy else 0
 
-        pat_prev = is_dict.get(prev_p, {}).get("IS_NET_PROFIT_AFTER_TAX", is_dict.get(prev_p, {}).get("NET_PROFIT_AFTER_TAX", 0)) if prev_p else 0
-        pat_yoy = is_dict.get(yoy_p, {}).get("IS_NET_PROFIT_AFTER_TAX", is_dict.get(yoy_p, {}).get("NET_PROFIT_AFTER_TAX", 0))
+        pat_prev = (is_dict.get(prev_p, {}).get("IS_NET_PROFIT_AFTER_TAX", is_dict.get(prev_p, {}).get("NET_PROFIT_AFTER_TAX", 0)) or 0) if prev_p else 0
+        pat_yoy = is_dict.get(yoy_p, {}).get("IS_NET_PROFIT_AFTER_TAX", is_dict.get(yoy_p, {}).get("NET_PROFIT_AFTER_TAX", 0)) or 0
         pat_growth_qoq = ((pat - pat_prev) / pat_prev * 100) if pat_prev else 0
         pat_growth_yoy = ((pat - pat_yoy) / pat_yoy * 100) if pat_yoy else 0
 
@@ -348,9 +355,14 @@ def extract_advanced_metrics_from_bctc(symbol):
     cash_flow = data.get("cash_flow", [])
     income_statement = data.get("income_statement", [])
 
-    latest_period = balance_sheet[0].get("period") if balance_sheet else None
-    if not latest_period and income_statement:
+    latest_period = None
+    if balance_sheet and balance_sheet[0].get("period"):
+        latest_period = balance_sheet[0].get("period")
+    elif income_statement and income_statement[0].get("period"):
         latest_period = income_statement[0].get("period")
+
+    if latest_period is None:
+        return {"cfo_latest": 0, "debt_to_equity": 0, "gross_margin": 0, "net_profit_ttm": 0}
 
     latest_cfo = 0
     cfo_ids = [
@@ -361,22 +373,22 @@ def extract_advanced_metrics_from_bctc(symbol):
     ]
     if cash_flow:
         for item in cash_flow:
-            if latest_period and item.get("period") == latest_period and item.get("id") in cfo_ids:
-                latest_cfo = item.get("value", 0)
+            if item.get("period") == latest_period and item.get("id") in cfo_ids:
+                latest_cfo = item.get("value", 0) or 0
                 break
         if latest_cfo == 0:
             for item in cash_flow:
                 if item.get("id") in cfo_ids:
-                    latest_cfo = item.get("value", 0)
+                    latest_cfo = item.get("value", 0) or 0
                     break
 
     total_liabilities = 0
     equity = 0
     if balance_sheet:
         for item in balance_sheet:
-            if latest_period and item.get("period") == latest_period:
+            if item.get("period") == latest_period:
                 item_id = item.get("id", "")
-                val = item.get("value", 0)
+                val = item.get("value", 0) or 0
                 if item_id in ["BS_TOTAL_LIABILITIES", "TOTAL_LIABILITIES"]:
                     total_liabilities = val
                 elif item_id in ["BS_EQUITY", "EQUITY"]:
@@ -390,9 +402,9 @@ def extract_advanced_metrics_from_bctc(symbol):
 
     if income_statement:
         for item in income_statement:
-            if latest_period and item.get("period") == latest_period:
+            if item.get("period") == latest_period:
                 item_id = item.get("id", "")
-                val = item.get("value", 0)
+                val = item.get("value", 0) or 0
                 if item_id in ["IS_GROSS_PROFIT", "GROSS_PROFIT"]:
                     gross_profit = val
                 elif item_id in ["IS_NET_REVENUE", "REVENUE", "NET_REVENUE", "IS_TOTAL_REVENUE"]:
@@ -407,11 +419,11 @@ def extract_advanced_metrics_from_bctc(symbol):
 
     net_profit_ttm = 0
     pat_ids = ["IS_NET_PROFIT_AFTER_TAX", "NET_PROFIT_AFTER_TAX", "IS_PROFIT_AFTER_TAX"]
-    pat_items = [item for item in income_statement if item.get("id") in pat_ids]
+    pat_items = [item for item in income_statement if item.get("id") in pat_ids and item.get("period") is not None]
     if pat_items:
         pat_items = sorted(pat_items, key=lambda x: x.get("period", ""), reverse=True)
         latest_4q = pat_items[:4]
-        net_profit_ttm = sum([q.get("value", 0) for q in latest_4q])
+        net_profit_ttm = sum([(q.get("value", 0) or 0) for q in latest_4q])
 
     return {
         "cfo_latest": round(latest_cfo / 1e9, 2),
@@ -423,12 +435,10 @@ def extract_advanced_metrics_from_bctc(symbol):
 
 def auto_git_push():
     try:
-        print("🔄 Đang đồng bộ dữ liệu lên GitHub...")
+        print("\n🔄 Đang tự động đồng bộ dữ liệu lên GitHub...")
         
-        # 1. Fetch thông tin mới nhất từ GitHub về
         subprocess.run(["git", "fetch", "origin", "main"], check=True)
         
-        # 2. Thử pull về. Nếu có conflict, tự động hủy rebase đang kẹt và ưu tiên data.json từ PC
         pull_result = subprocess.run(["git", "pull", "origin", "main", "--rebase"], capture_output=True, text=True)
         if pull_result.returncode != 0:
             print("⚠️ Phát hiện xung đột, đang xử lý ưu tiên file data.json trên PC...")
@@ -436,7 +446,6 @@ def auto_git_push():
             subprocess.run(["git", "checkout", "--ours", DATA_FILE], check=False)
             subprocess.run(["git", "add", DATA_FILE], check=False)
 
-        # 3. Add lại các file thay đổi từ quá trình cào trên PC
         subprocess.run(["git", "add", DATA_FILE], check=True)
         subprocess.run(["git", "add", LAST_UPDATE_FILE], check=True)
         subprocess.run(["git", "add", HISTORY_DIR], check=True)
@@ -445,13 +454,11 @@ def auto_git_push():
         if os.path.exists(JS_LIB_FILE):
             subprocess.run(["git", "add", JS_LIB_FILE], check=True)
 
-        # 4. Kiểm tra xem có thay đổi thực sự hay không
         status_result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
         if not status_result.stdout.strip():
             print("ℹ️ Không có dữ liệu thay đổi nào mới để đẩy lên.")
             return
 
-        # 5. Commit và Push lên GitHub
         commit_msg = f"Auto update symbols data & last_update timestamp - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         subprocess.run(["git", "commit", "-m", commit_msg], check=True)
         subprocess.run(["git", "push", "origin", "main", "--force-with-lease"], check=True)
@@ -660,6 +667,7 @@ def main():
 
     print(f"✅ Đã lưu file {LAST_UPDATE_FILE} với mốc thời gian: {crawl_timestamp}")
 
+    # 🚀 TỰ ĐỘNG ĐẨY LÊN GITHUB SAU KHI CÀO XONG
     auto_git_push()
 
 

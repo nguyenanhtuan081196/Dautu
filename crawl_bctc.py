@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import time
 import subprocess
@@ -77,9 +77,25 @@ def auto_git_push_bctc(target_symbols):
         subprocess.run(["git", "add", "bctc_data/"], check=True)
         
         commit_msg = f"Auto update full BCTC data (with Cash Flow) - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        subprocess.run(["git", "commit", "-m", commit_msg], check=True)
+        
+        # Thử commit, nếu không có gì thay đổi thì bỏ qua
+        try:
+            subprocess.run(["git", "commit", "-m", commit_msg], check=True, capture_output=True)
+        except subprocess.CalledProcessError:
+            print("ℹ️ Không có thay đổi mới để commit.")
+            return
+
+        # THÊM LỆNH PULL REBASE ĐỂ TRÁNH LỖI REJECTED
+        print("🔄 Đang đồng bộ với GitHub (pull --rebase)...")
+        subprocess.run(["git", "pull", "--rebase", "origin", "main"], check=True)
+        
+        # Đẩy lên GitHub
         subprocess.run(["git", "push"], check=True)
         print("🚀 Đẩy dữ liệu BCTC lên GitHub thành công!")
+        
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Lỗi khi đẩy lên GitHub: {e}")
+        print("👉 Gợi ý: Anh thử chạy lệnh 'git pull origin main --rebase' thủ công để kiểm tra xung đột.")
     except Exception as e:
         print(f"ℹ️ Git push info: {e}")
 
