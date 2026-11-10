@@ -65,4 +65,6 @@ Giả sử bạn muốn chạy lần 1 (khoảng 13-14 mã):
 
 ## Data-quality note
 
-The current fundamental pipeline still needs a source-aware review of quarterly versus year-to-date cash-flow values before CFO is compared with TTM net profit. Until the reporting-period semantics are verified against actual provider payloads, do not interpret the current CFO score as a validated TTM cash-conversion ratio.
+The screener now calculates CFO TTM and net-profit TTM over the same four consecutive quarter labels and leaves either value unavailable when a quarter is missing or ambiguous. The calculation assumes the provider's quarter-labelled cash-flow observations are standalone quarterly values; verify provider payload semantics and monitor restatements before treating the cash-conversion score as fully validated. See `FINANCIAL_METRICS.md` for definitions and limitations.
+
+The root `login.html` is a legacy URL that redirects to the canonical `index.html` application. Use `index.html` as the only supported website entry point.
