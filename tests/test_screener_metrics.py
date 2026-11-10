@@ -52,6 +52,18 @@ class ScreenerCashConversionTests(unittest.TestCase):
         result = evaluate_stock("FPT", self._stock(cfo_latest=50, cfo_ttm=-10))
         self.assertIn("CFO TTM âm", result["fundamental_notes"])
 
+    def test_non_finite_financial_values_are_normalized_to_missing(self):
+        result = evaluate_stock("FPT", self._stock(
+            cfo_latest=float("nan"),
+            cfo_ttm=float("nan"),
+            net_profit_ttm=100,
+            liabilities_to_equity=float("nan"),
+        ))
+        self.assertIsNone(result["cfo_latest"])
+        self.assertIsNone(result["cfo_ttm"])
+        self.assertIsNone(result["liabilities_to_equity"])
+        self.assertNotIn("CFO TTM chuyển đổi tiền mặt tốt", result["fundamental_notes"])
+
 
 if __name__ == "__main__":
     unittest.main()
