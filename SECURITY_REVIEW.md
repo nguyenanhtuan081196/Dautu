@@ -8,7 +8,7 @@ The current browser code:
 - Creates a Firebase Auth account in `handleRegister`, then writes `allowed_users/{email}` with `role: "user"` and a seven-day `expiresAt` value.
 - During `onAuthStateChanged`, reads the same document and denies access when it is missing; it no longer silently recreates deleted account records.
 - Shows the Admin button only when the account document says `role: "admin"`, the email matches the server-side allow-list, and Firebase Auth reports the email as verified.
-- Lets the Admin UI list all `allowed_users` documents, extend expiry, and delete user documents.
+- Lets the Admin UI list all `allowed_users` documents, extend expiry, and suspend access by expiring the account record.
 - Fails closed in the browser when the Firestore verification read fails.
 
 No `firestore.rules`, `firebase.json`, or rules deployment configuration was found in the repository during this review. The deployed Firebase rules and current admin account configuration were not accessible, so this review cannot establish whether the live database is currently exploitable.
@@ -37,7 +37,7 @@ A tightened candidate ruleset is now in `firestore.rules` on this review branch.
 Candidate policy changes:
 - Users can get only their own account document; only Admin can list the collection.
 - Self-registration is limited to the exact three account fields, role `user`, and an expiry no later than seven days after server request time.
-- Users cannot update account documents; only Admin can change role/expiry or delete accounts.
+- Users cannot update account documents; only Admin can change role/expiry. Client-side deletion is disabled; Admin suspends access by setting expiry in the past, preventing the account owner from recreating a deleted record.
 - Admin access requires the allow-listed email and a verified Firebase Auth email.
 - Watchlists remain restricted by UID.
 
