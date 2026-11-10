@@ -532,7 +532,7 @@
                         userData = {
                             email: user.email,
                             role: 'user',
-                            expiresAt: expireDate.toISOString()
+                            expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                         };
                         await userDocRef.set(userData);
                     } else {
@@ -633,7 +633,7 @@
                 await db.collection('allowed_users').doc(email.toLowerCase()).set({
                     email: email,
                     role: 'user',
-                    expiresAt: expireDate.toISOString()
+                    expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
                 alert("Đăng ký thành công tài khoản trải nghiệm 7 ngày!");
             } catch (err) {
@@ -714,7 +714,7 @@
                 let currentExpire = parseDate(doc.data().expiresAt) || new Date();
                 if (currentExpire < new Date()) currentExpire = new Date();
                 currentExpire.setDate(currentExpire.getDate() + 30);
-                await docRef.update({ expiresAt: currentExpire.toISOString() });
+                await docRef.update({ expiresAt: firebase.firestore.Timestamp.fromDate(currentExpire) });
                 alert(`Đã gia hạn +30 ngày cho ${email}`);
                 openAdminModal();
             }
