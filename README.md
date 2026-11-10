@@ -56,6 +56,14 @@ Giả sử bạn muốn chạy lần 1 (khoảng 13-14 mã):
 👉 Bấm Run workflow. 
 
 
+## Firestore Rules security tests
+
+- Prerequisites: Node.js 20+ and Java 21+.
+- Install the test dependencies with `npm install`.
+- Run the Firestore Rules Emulator suite with `npm run test:rules`.
+- The suite uses a disposable `demo-dautu` project ID and does not connect to production Firebase.
+- The candidate rules are not deployed automatically by this test workflow.
+
 ## Development and quality checks
 
 - Python dependencies are listed in `requirements.txt`; install them with `python -m pip install -r requirements.txt`.
