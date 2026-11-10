@@ -76,3 +76,12 @@ Giả sử bạn muốn chạy lần 1 (khoảng 13-14 mã):
 The screener now calculates CFO TTM and net-profit TTM over the same four consecutive quarter labels and leaves either value unavailable when a quarter is missing or ambiguous. The calculation assumes the provider's quarter-labelled cash-flow observations are standalone quarterly values; verify provider payload semantics and monitor restatements before treating the cash-conversion score as fully validated. See `FINANCIAL_METRICS.md` for definitions and limitations.
 
 The root `login.html` is a legacy URL that redirects to the canonical `index.html` application. Use `index.html` as the only supported website entry point.
+
+
+## Quản lý tài khoản trong Admin
+
+- Đăng nhập bằng tài khoản quản trị đã xác minh email, sau đó mở **Admin** trên thanh đầu trang.
+- Tìm tài khoản theo email hoặc lọc theo trạng thái: đang hoạt động, hết hạn/đã thu hồi, Admin.
+- Chọn **Gia hạn** để nhập số ngày (1–3650). Hạn mới được lưu dưới dạng Firestore Timestamp để tương thích với Firestore Rules.
+- Chọn **Thu hồi** để chặn quyền sử dụng ứng dụng của tài khoản thường. Hồ sơ Firestore được giữ lại và đặt hạn về quá khứ; không xóa người dùng khỏi Firebase Authentication. Tài khoản Admin được khóa thao tác trong giao diện.
+- Xóa người dùng khỏi Firebase Authentication là thao tác riêng, cần backend tin cậy dùng Firebase Admin SDK; không thực hiện trực tiếp từ trình duyệt.
