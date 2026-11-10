@@ -10,17 +10,15 @@ LAST_UPDATE_FILE = "last_update.json"
 def get_firebase_config():
     raw = os.environ.get("FIREBASE_CONFIG", "").strip()
     if not raw:
-        print("⚠️ Thiếu secret FIREBASE_CONFIG — dùng config rỗng.")
-        return {}
+        raise RuntimeError("Thiếu secret FIREBASE_CONFIG; dừng build để tránh phát hành website không có cấu hình xác thực.")
     try:
         config = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"❌ FIREBASE_CONFIG không phải JSON hợp lệ: {e}")
-        return {}
+        raise RuntimeError(f"FIREBASE_CONFIG không phải JSON hợp lệ: {e}") from e
     required = ["apiKey", "authDomain", "projectId", "appId"]
     missing = [k for k in required if not config.get(k)]
     if missing:
-        print(f"⚠️ FIREBASE_CONFIG thiếu key: {', '.join(missing)}")
+        raise RuntimeError(f"FIREBASE_CONFIG thiếu key bắt buộc: {', '.join(missing)}")
     return config
 
 
@@ -608,7 +606,14 @@ def generate_html():
                         }
                     }
                 } catch (err) {
-                    console.warn("⚠️ Lỗi kiểm tra Firestore:", err);
+                    console.error("Không thể xác minh quyền truy cập qua Firestore:", err);
+                    authOverlay.classList.remove('hidden');
+                    const authError = document.getElementById('login-error');
+                    if (authError) {
+                        authError.innerText = "Không thể xác minh quyền truy cập. Vui lòng kiểm tra kết nối và thử lại.";
+                        authError.classList.remove('hidden');
+                    }
+                    return; // Fail closed: tuyệt đối không tải dữ liệu khi chưa xác minh được quyền.
                 }
 
                 loadData(true);
