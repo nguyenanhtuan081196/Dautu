@@ -24,6 +24,14 @@ Branch: `codex/dautu-audit-hardening`
 
 Important assumption: the provider's period='quarter' cash-flow rows are treated as standalone quarterly values. This matches the inspected Q1–Q3 sample patterns, but any provider restatement or cumulative annual Q4 representation must be detected before extending this formula to other statement sources.
 
+## Phase 2: GitHub Actions safety
+
+- Production data-generation workflows now run only on main; the render and Quant workflows also restrict push triggers to main.
+- The Quant and AI workflows share a concurrency group because both update data.json.
+- The render workflow has its own concurrency group because it updates generated HTML and simulator outputs.
+- Data jobs refresh from the latest main revision before running, and failed rebases are no longer swallowed as successful operations.
+- A render workflow run on the maintenance branch exposed the old unsafe rebase/push behavior. It conflicted while rebasing and did not push; branch restrictions and explicit failure handling have since been added.
+
 ## Confirmed findings requiring a follow-up phase
 
 ### Authentication and authorization
