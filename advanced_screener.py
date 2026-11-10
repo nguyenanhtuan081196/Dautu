@@ -286,7 +286,7 @@ def main():
     results = sorted(results, key=lambda x: (x.get('fundamental_score', 0), x.get('roe', 0)), reverse=True)
 
     with open(OUTPUT_JSON, "w", encoding="utf-8") as jf:
-        json.dump(results, jf, ensure_ascii=False, indent=4)
+        json.dump(results, jf, ensure_ascii=False, indent=4, allow_nan=False)
         
     df = pd.DataFrame(results)
     df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")
