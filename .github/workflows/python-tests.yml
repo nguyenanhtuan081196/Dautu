@@ -27,3 +27,22 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Run Quant Screener smoke test against repository data
         run: python advanced_screener.py
+
+  firestore-rules-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Set up Java for Firebase Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install Firebase test dependencies
+        run: npm install
+      - name: Run Firestore Rules Emulator tests
+        run: npm run test:rules
