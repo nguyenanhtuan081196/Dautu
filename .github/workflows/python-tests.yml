@@ -25,3 +25,5 @@ jobs:
         run: python -m compileall -q .
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+      - name: Run Quant Screener smoke test against repository data
+        run: python advanced_screener.py
