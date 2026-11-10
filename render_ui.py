@@ -372,7 +372,7 @@ def generate_html():
 
                     <div id="pro-metrics-box" class="hidden mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 bg-slate-950/80 p-3 rounded-xl border border-emerald-500/30 text-center animate-fadeIn">
                         <div>
-                            <span class="text-[10px] text-slate-400 block" id="label-cfo" title="Dòng tiền hoạt động kinh doanh">Dòng tiền CFO</span>
+                            <span class="text-[10px] text-slate-400 block" id="label-cfo" title="Tổng dòng tiền từ hoạt động kinh doanh trong 4 quý gần nhất">CFO TTM (4Q)</span>
                             <span id="modal-cfo" class="text-xs font-bold text-emerald-400">--</span>
                         </div>
                         <div>
@@ -890,10 +890,12 @@ def generate_html():
                         pb: extraData.pb !== undefined ? extraData.pb : item.pb,
                         roe: extraData.roe !== undefined ? extraData.roe : item.roe,
                         roa: extraData.roa !== undefined ? extraData.roa : item.roa,
-                        cfo_latest: extraData.cfo_latest !== undefined ? extraData.cfo_latest : (item.cfo_latest || 0),
-                        debt_to_equity: extraData.debt_to_equity !== undefined ? extraData.debt_to_equity : (item.debt_to_equity || 0),
-                        gross_margin: extraData.gross_margin !== undefined ? extraData.gross_margin : (item.gross_margin || 0),
-                        net_profit_ttm: extraData.net_profit_ttm !== undefined ? extraData.net_profit_ttm : (item.net_profit_ttm || 0),
+                        cfo_latest: extraData.cfo_latest !== undefined ? extraData.cfo_latest : item.cfo_latest,
+                        cfo_ttm: extraData.cfo_ttm !== undefined ? extraData.cfo_ttm : item.cfo_ttm,
+                        debt_to_equity: extraData.debt_to_equity !== undefined ? extraData.debt_to_equity : item.debt_to_equity,
+                        liabilities_to_equity: extraData.liabilities_to_equity !== undefined ? extraData.liabilities_to_equity : item.liabilities_to_equity,
+                        gross_margin: extraData.gross_margin !== undefined ? extraData.gross_margin : item.gross_margin,
+                        net_profit_ttm: extraData.net_profit_ttm !== undefined ? extraData.net_profit_ttm : item.net_profit_ttm,
                         close_price: extraData.close !== undefined ? extraData.close : item.close_price,
 
                         bctc: extraData.bctc_evaluation || extraData.bctc || item.bctc_evaluation || item.bctc || "",
@@ -1053,20 +1055,15 @@ def generate_html():
 
             const isBankOrSec = (item.sector === "NGAN_HANG" || item.sector === "CHUNG_KHOAN");
 
-            document.getElementById('modal-cfo').innerText = (item.cfo_latest !== undefined && item.cfo_latest !== null) ? item.cfo_latest + ' Tỷ' : '—';
+            document.getElementById('modal-cfo').innerText = (item.cfo_ttm !== undefined && item.cfo_ttm !== null) ? item.cfo_ttm + ' Tỷ' : 'Chưa đủ 4 quý';
             document.getElementById('modal-ttm').innerText = (item.net_profit_ttm !== undefined && item.net_profit_ttm !== null) ? item.net_profit_ttm + ' Tỷ' : '—';
 
             const deLabel = document.getElementById('label-de');
             const deVal = document.getElementById('modal-de');
-            if (isBankOrSec) {
-                deLabel.innerText = "Hệ số T.Sản/VCSH";
-                deLabel.title = "Đòn bẩy đặc thù Ngân hàng/Chứng khoán";
-                deVal.innerText = (item.debt_to_equity !== undefined && item.debt_to_equity !== null) ? item.debt_to_equity + 'x (Nợ/VCSH)' : '—';
-            } else {
-                deLabel.innerText = "Đòn bẩy D/E";
-                deLabel.title = "Nợ phải trả / Vốn chủ sở hữu";
-                deVal.innerText = (item.debt_to_equity !== undefined && item.debt_to_equity !== null) ? item.debt_to_equity : '—';
-            }
+            deLabel.innerText = "Nợ phải trả/VCSH";
+            deLabel.title = "Tổng nợ phải trả chia vốn chủ sở hữu; không đồng nghĩa với nợ vay có lãi/VCSH.";
+            const liabilitiesEquity = item.liabilities_to_equity ?? item.debt_to_equity;
+            deVal.innerText = (liabilitiesEquity !== undefined && liabilitiesEquity !== null) ? liabilitiesEquity + 'x' : '—';
 
             const gmLabel = document.getElementById('label-gm');
             const gmVal = document.getElementById('modal-gm');
