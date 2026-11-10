@@ -560,7 +560,14 @@
                         }
                     }
                 } catch (err) {
-                    console.warn("⚠️ Lỗi kiểm tra Firestore:", err);
+                    console.error("Không thể xác minh quyền truy cập qua Firestore:", err);
+                    authOverlay.classList.remove('hidden');
+                    const authError = document.getElementById('login-error');
+                    if (authError) {
+                        authError.innerText = "Không thể xác minh quyền truy cập. Vui lòng kiểm tra kết nối và thử lại.";
+                        authError.classList.remove('hidden');
+                    }
+                    return; // Fail closed: tuyệt đối không tải dữ liệu khi chưa xác minh được quyền.
                 }
 
                 loadData(true);
