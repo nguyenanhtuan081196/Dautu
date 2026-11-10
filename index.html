@@ -718,8 +718,6 @@
             const listEl = document.getElementById('admin-users-list');
             const search = (document.getElementById('admin-user-search')?.value || '').trim().toLowerCase();
             const filter = document.getElementById('admin-user-filter')?.value || 'all';
-            const now = Date.now();
-
             const totalUsers = adminUsersCache.length;
             const activeUsers = adminUsersCache.filter(item => item.data.role === 'admin' || getAdminAccountStatus(item.data).key === 'active').length;
             const expiredUsers = adminUsersCache.filter(item => item.data.role !== 'admin' && getAdminAccountStatus(item.data).key === 'expired').length;
@@ -800,7 +798,7 @@
                     const revokeButton = document.createElement('button');
                     revokeButton.type = 'button';
                     revokeButton.className = 'text-rose-400 hover:text-rose-300 text-xs font-bold';
-                    revokeButton.textContent = status.key === 'expired' ? 'Thu hồi lại' : 'Thu hồi';
+                    revokeButton.textContent = 'Thu hồi';
                     revokeButton.addEventListener('click', () => suspendUser(id));
                     actionsCell.appendChild(revokeButton);
                 }
