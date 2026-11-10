@@ -109,3 +109,5 @@ Important assumption: the provider's period='quarter' cash-flow rows are treated
 - The legacy page also used a different account collection on registration and continued loading app data when Firestore authorization failed.
 - Replaced the duplicate page with a redirect to the canonical `index.html`, preserving query parameters and fragments.
 - This removes the conflicting client-side entry point from the maintenance branch; it does not modify live Firebase settings or account records.
+
+- Added a regression test ensuring the legacy `login.html` cannot reintroduce a second Firebase project or old authorization path.
