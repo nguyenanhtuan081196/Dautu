@@ -20,18 +20,14 @@ class StaticEntryPointTests(unittest.TestCase):
         self.assertIn("function suspendUser(email)", app)
         self.assertIn("firebase.firestore.Timestamp.fromDate(currentExpire)", app)
         self.assertIn("firebase.firestore.Timestamp.fromDate(new Date(0))", app)
-        self.assertIn("currentUser.emailVerified", app)
         self.assertNotIn("docRef.delete()", app)
         self.assertNotIn("function deleteUser(email)", app)
 
-    def test_admin_guard_refreshes_firebase_auth_before_verification_check(self):
+    def test_admin_guard_allows_fixed_admin_email_without_verification(self):
         app = (ROOT / "index.html").read_text(encoding="utf-8")
         admin_guard = app[app.index("async function openAdminModal()"):]
-        self.assertIn("await currentUser.reload()", admin_guard)
-        self.assertIn("await currentUser.getIdToken(true)", admin_guard)
-        self.assertIn("currentUser.emailVerified !== true", admin_guard)
         self.assertIn("Tài khoản hiện tại không phải email Admin được cấp quyền.", admin_guard)
-        self.assertNotIn("!currentUser.emailVerified", admin_guard)
+        self.assertNotIn("emailVerified", admin_guard)
 
     def test_new_user_profiles_use_firestore_timestamps(self):
         app = (ROOT / "index.html").read_text(encoding="utf-8")
