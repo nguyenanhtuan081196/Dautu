@@ -43,6 +43,8 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Install Firebase test dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
+      - name: Audit test tooling for critical vulnerabilities
+        run: npm audit --audit-level=critical
       - name: Run Firestore Rules Emulator tests
         run: npm run test:rules
