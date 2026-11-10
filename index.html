@@ -833,8 +833,7 @@
                     throw new Error('Phiên đăng nhập đã hết hạn. Anh hãy đăng nhập lại.');
                 }
 
-                // Refresh the Firebase Auth profile and ID token before checking
-                // emailVerified. A long-lived tab can otherwise hold stale auth state.
+                // Refresh the Firebase Auth profile and ID token for a current session.
                 await currentUser.reload();
                 currentUser = auth.currentUser;
                 if (!currentUser) {
