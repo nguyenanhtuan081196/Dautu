@@ -515,67 +515,85 @@
         const auth = firebase.auth();
         const db = firebase.firestore();
 
-        auth.onAuthStateChanged(async (user) => {
+        const ADMIN_EMAIL = 'nguyenanhtuan081196@gmail.com';
+        let registrationInProgress = false;
+
+        async function verifyAuthenticatedUser(user) {
             const authOverlay = document.getElementById('auth-overlay');
             const expiredModal = document.getElementById('expired-modal');
 
-            if (user) {
-                try {
-                    const emailKey = user.email.toLowerCase();
-                    const userDocRef = db.collection('allowed_users').doc(emailKey);
-                    const doc = await userDocRef.get();
+            try {
+                if (!user.email) throw new Error('Tài khoản Firebase không có email.');
 
-                    let userData = {};
-                    if (!doc.exists) {
-                        const expireDate = new Date();
-                        expireDate.setDate(expireDate.getDate() + 7);
-                        userData = {
-                            email: user.email,
-                            role: 'user',
-                            expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
-                        };
-                        await userDocRef.set(userData);
-                    } else {
-                        userData = doc.data();
-                    }
+                const emailKey = user.email.toLowerCase();
+                const doc = await db.collection('allowed_users').doc(emailKey).get();
 
-                    const now = new Date();
-                    const expireTime = parseDate(userData.expiresAt);
-
-                    if (expireTime && now > expireTime && userData.role !== 'admin') {
-                        authOverlay.classList.add('hidden');
-                        expiredModal.classList.remove('hidden');
-                        document.getElementById('user-uid-text').innerText = user.uid;
-                        await auth.signOut();
-                        return;
-                    } else {
-                        authOverlay.classList.add('hidden');
-                        expiredModal.classList.add('hidden');
-                    }
-
-                    if (userData.role === 'admin') {
-                        const adminBtn = document.getElementById('btn-admin-panel');
-                        if (adminBtn) {
-                            adminBtn.classList.remove('hidden');
-                            adminBtn.classList.add('flex');
-                        }
-                    }
-                } catch (err) {
-                    console.error("Không thể xác minh quyền truy cập qua Firestore:", err);
+                // Missing records must not be silently recreated at login:
+                // otherwise deleting a user record would not revoke access.
+                if (!doc.exists) {
                     authOverlay.classList.remove('hidden');
+                    expiredModal.classList.add('hidden');
                     const authError = document.getElementById('login-error');
                     if (authError) {
-                        authError.innerText = "Không thể xác minh quyền truy cập. Vui lòng kiểm tra kết nối và thử lại.";
+                        authError.innerText = 'Tài khoản chưa được cấp quyền sử dụng. Vui lòng liên hệ Admin.';
                         authError.classList.remove('hidden');
                     }
-                    return; // Fail closed: tuyệt đối không tải dữ liệu khi chưa xác minh được quyền.
+                    await auth.signOut();
+                    return false;
+                }
+
+                const userData = doc.data();
+                const expireTime = parseDate(userData.expiresAt);
+                const isAdminAccount = emailKey === ADMIN_EMAIL
+                    && user.emailVerified === true
+                    && userData.role === 'admin';
+
+                if (!isAdminAccount && (!expireTime || new Date() > expireTime)) {
+                    authOverlay.classList.add('hidden');
+                    expiredModal.classList.remove('hidden');
+                    document.getElementById('user-uid-text').innerText = user.uid;
+                    await auth.signOut();
+                    return false;
+                }
+
+                authOverlay.classList.add('hidden');
+                expiredModal.classList.add('hidden');
+
+                const adminBtn = document.getElementById('btn-admin-panel');
+                if (adminBtn) {
+                    if (isAdminAccount) {
+                        adminBtn.classList.remove('hidden');
+                        adminBtn.classList.add('flex');
+                    } else {
+                        adminBtn.classList.add('hidden');
+                        adminBtn.classList.remove('flex');
+                    }
                 }
 
                 loadData(true);
-
-            } else {
+                return true;
+            } catch (err) {
+                console.error('Không thể xác minh quyền truy cập qua Firestore:', err);
                 authOverlay.classList.remove('hidden');
-                expiredModal.classList.add('hidden');
+                const authError = document.getElementById('login-error');
+                if (authError) {
+                    authError.innerText = 'Không thể xác minh quyền truy cập. Vui lòng kiểm tra kết nối và thử lại.';
+                    authError.classList.remove('hidden');
+                }
+                if (auth.currentUser) await auth.signOut();
+                return false;
+            }
+        }
+
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                // Registration writes the account document before verification.
+                // Skip this first auth event to avoid racing the registration write.
+                if (registrationInProgress) return;
+                await verifyAuthenticatedUser(user);
+            } else {
+                document.getElementById('auth-overlay').classList.remove('hidden');
+                document.getElementById('expired-modal').classList.add('hidden');
             }
         });
 
@@ -621,13 +639,17 @@
 
         async function handleRegister(e) {
             e.preventDefault();
-            const email = document.getElementById('reg-email').value;
+            const email = document.getElementById('reg-email').value.trim();
             const pass = document.getElementById('reg-password').value;
             const errBox = document.getElementById('register-error');
             errBox.classList.add('hidden');
 
+            registrationInProgress = true;
+            let createdUser = null;
             try {
                 const cred = await auth.createUserWithEmailAndPassword(email, pass);
+                createdUser = cred.user;
+
                 const expireDate = new Date();
                 expireDate.setDate(expireDate.getDate() + 7);
                 await db.collection('allowed_users').doc(email.toLowerCase()).set({
@@ -635,10 +657,20 @@
                     role: 'user',
                     expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
-                alert("Đăng ký thành công tài khoản trải nghiệm 7 ngày!");
+
+                registrationInProgress = false;
+                const verified = await verifyAuthenticatedUser(createdUser);
+                if (verified) {
+                    alert('Đăng ký thành công tài khoản trải nghiệm 7 ngày!');
+                }
             } catch (err) {
-                errBox.innerText = "Lỗi đăng ký: " + err.message;
+                console.error('Đăng ký tài khoản thất bại:', err);
+                errBox.innerText = 'Lỗi đăng ký: ' + err.message
+                    + (createdUser ? ' Tài khoản đăng nhập đã được tạo; vui lòng liên hệ Admin để hoàn tất cấp quyền.' : '');
                 errBox.classList.remove('hidden');
+                if (auth.currentUser) await auth.signOut();
+            } finally {
+                registrationInProgress = false;
             }
         }
 
