@@ -846,9 +846,7 @@
                 if (adminEmail !== 'nguyenanhtuan081196@gmail.com') {
                     throw new Error('Tài khoản hiện tại không phải email Admin được cấp quyền.');
                 }
-                if (currentUser.emailVerified !== true) {
-                    throw new Error('Firebase hiện ghi nhận email Admin chưa được xác minh. Anh hãy xác minh email rồi đăng nhập lại.');
-                }
+                // Temporary compatibility mode: Admin access does not require email verification.
 
                 const adminDoc = await db.collection('allowed_users').doc(adminEmail).get();
                 if (!adminDoc.exists || adminDoc.data().role !== 'admin') {
