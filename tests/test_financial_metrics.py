@@ -77,6 +77,27 @@ class FinancialMetricsTests(unittest.TestCase):
             self.assertIsNone(result["net_profit_ttm"])
             self.assertIsNone(result["liabilities_to_equity"])
 
+    def test_duplicate_quarter_observations_are_rejected_not_arbitrarily_selected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self._write_report(folder)
+            path = Path(folder, "TEST.json")
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["cash_flow"].append({
+                "period": "2026-Q3",
+                "id": "CF_NET_CASH_FLOWS_FROM_OPERATING_ACTIVITIES",
+                "value": 999_000_000_000,
+            })
+            report["income_statement"].append({
+                "period": "2026-Q2",
+                "id": "IS_NET_PROFIT_AFTER_TAX",
+                "value": 999_000_000_000,
+            })
+            path.write_text(json.dumps(report), encoding="utf-8")
+            result = extract_advanced_metrics_from_bctc("TEST", folder)
+            self.assertIsNone(result["cfo_latest"])
+            self.assertIsNone(result["cfo_ttm"])
+            self.assertIsNone(result["net_profit_ttm"])
+
 
 if __name__ == "__main__":
     unittest.main()
