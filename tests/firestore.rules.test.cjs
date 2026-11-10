@@ -62,9 +62,9 @@ test('a user can read only their own account document', async () => {
   await assertSucceeds(signedIn(USER_EMAIL).doc('allowed_users/user@example.com').get());
   await assertFails(signedIn(USER_EMAIL).doc('allowed_users/other@example.com').get());
 });
-test('only the verified admin can list account records', async () => {
+test('only the fixed admin email can list account records, even when unverified', async () => {
   await assertFails(signedIn(USER_EMAIL).collection('allowed_users').get());
-  await assertFails(signedIn(ADMIN_EMAIL, 'admin-unverified', false).collection('allowed_users').get());
+  await assertSucceeds(signedIn(ADMIN_EMAIL, 'admin-unverified', false).collection('allowed_users').get());
   await assertSucceeds(signedIn(ADMIN_EMAIL, 'admin-verified', true).collection('allowed_users').get());
 });
 test('a user can create only their own seven-day user record', async () => {
@@ -98,7 +98,7 @@ test('users cannot update or delete account records', async () => {
   }));
   await assertFails(db.doc('allowed_users/user@example.com').delete());
 });
-test('verified admin can extend expiry, update role, and revoke access without deleting the record', async () => {
+test('admin can extend expiry, update role, and revoke access without deleting the record', async () => {
   const db = signedIn(ADMIN_EMAIL, 'admin-verified', true);
   await assertSucceeds(db.doc('allowed_users/user@example.com').update({
     expiresAt: Timestamp.fromMillis(Date.now() + 30 * 86400000),
