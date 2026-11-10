@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import datetime
 import subprocess
+import math
 
 def get_historical_return_rate_with_details(symbol, history_dir="history"):
     """
@@ -46,8 +47,14 @@ def get_historical_return_rate_with_details(symbol, history_dir="history"):
         start_row = df_quarterly.iloc[0]
         end_row = df_quarterly.iloc[-1]
         
-        start_price = start_row['close']
-        end_price = end_row['close']
+        start_price = float(start_row['close'])
+        end_price = float(end_row['close'])
+        
+        # Giá không hợp lệ (0, âm, NaN/Inf) không thể dùng để tính CAGR.
+        if not (math.isfinite(start_price) and math.isfinite(end_price)):
+            return None
+        if start_price <= 0 or end_price <= 0:
+            return None
         
         start_date = start_row['date']
         end_date = end_row['date']
@@ -65,7 +72,8 @@ def get_historical_return_rate_with_details(symbol, history_dir="history"):
             return None
             
         cagr = (end_price / start_price) ** (1 / years) - 1
-        cagr = max(-0.5, min(cagr, 1.0))
+        if not math.isfinite(cagr):
+            return None
         
         # Trả về kết quả kèm chi tiết giá trung bình quý
         return {
