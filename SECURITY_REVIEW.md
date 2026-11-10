@@ -41,7 +41,7 @@ Candidate policy changes:
 - Admin access requires the allow-listed email and a verified Firebase Auth email.
 - Watchlists remain restricted by UID.
 
-**Important:** The candidate rules have not been deployed and have not yet been validated in the Firebase Emulator. The current administrator must have a verified email before deployment, or Admin list/update/delete operations will be denied. Existing account expiry strings must be migrated to Firestore Timestamps before applying these rules. Test existing account, trial signup, Admin list, extension, and deletion flows first.
+**Important:** The candidate rules have not been deployed and have not yet been validated in the Firebase Emulator. The current administrator must have a verified email before deployment, or Admin list/update/delete operations will be denied. Existing ISO-string expiry values remain readable by the current frontend's parseDate helper; they do not need a bulk migration before applying the candidate rules. New registrations and admin extensions write Firestore Timestamps. Test existing account, trial signup, Admin list, extension, and deletion flows first.
 
 ## Recommended target policy
 
@@ -64,7 +64,7 @@ Before deploying any new rules:
 - Export and inspect the currently deployed Firestore Rules.
 - Identify the current administrator UID(s) through a trusted Firebase console or Admin SDK process.
 - Back up the `allowed_users` collection.
-- Decide whether the existing email-keyed documents will be migrated to UID-keyed documents or temporarily supported by a narrow compatibility rule.
+- Keep the current email-keyed documents for this narrow rules change; plan UID migration separately if desired.
 - Run the complete rules test suite in the Firebase Emulator.
 - Deploy rules separately from the frontend and verify existing admin and trial-user flows.
 
