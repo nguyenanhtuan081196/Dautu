@@ -24,6 +24,25 @@ The browser is an untrusted client. Hiding the Admin button or checking `role ==
 
 The registration and auto-provision code legitimately creates a `role: "user"` record from the client. This is safe only if deployed rules restrict self-creation to the authenticated user's own email document, validate the allowed fields and role, and deny client-side role changes. If the deployed rules permit broad writes, privilege escalation may be possible. This is a conditional risk until the live rules are inspected.
 
+## Supplied Firestore Rules review
+
+The owner supplied the deployed rules text for review. Confirmed findings:
+- `allow read: if isSignedIn()` permits any signed-in account to list/read every `allowed_users` document.
+- Self-registration constrains `role` but does not constrain `expiresAt`; a client can request an arbitrary expiry value.
+- Owner updates deny changes only to `role` and `expiresAt`, leaving every other field writable.
+- The email allow-list is a server-enforced admin check, which is stronger than trusting the client-side role field. However, the rule should also require `email_verified == true` for the admin identity.
+
+A tightened candidate ruleset is now in `firestore.rules` on this review branch. The frontend now writes expiry as a Firestore Timestamp (including the seven-day initial trial and admin extension), which allows rules to compare expiry against server `request.time`.
+
+Candidate policy changes:
+- Users can get only their own account document; only Admin can list the collection.
+- Self-registration is limited to the exact three account fields, role `user`, and an expiry no later than seven days after server request time.
+- Users cannot update account documents; only Admin can change role/expiry or delete accounts.
+- Admin access requires the allow-listed email and a verified Firebase Auth email.
+- Watchlists remain restricted by UID.
+
+**Important:** The candidate rules have not been deployed and have not yet been validated in the Firebase Emulator. The current administrator must have a verified email before deployment, or Admin list/update/delete operations will be denied. Existing account expiry strings must be migrated to Firestore Timestamps before applying these rules. Test existing account, trial signup, Admin list, extension, and deletion flows first.
+
 ## Recommended target policy
 
 Use Firebase Authentication identity for user ownership and a trusted authorization source for administrator privileges.
