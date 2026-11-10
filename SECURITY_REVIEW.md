@@ -6,8 +6,8 @@ The current frontend uses Firebase Authentication email/password sign-in and Fir
 
 The current browser code:
 - Creates a Firebase Auth account in `handleRegister`, then writes `allowed_users/{email}` with `role: "user"` and a seven-day `expiresAt` value.
-- During `onAuthStateChanged`, reads the same document and creates a seven-day user document when it is missing.
-- Treats the Firestore document's `role` field as the source for showing the Admin button.
+- During `onAuthStateChanged`, reads the same document and denies access when it is missing; it no longer silently recreates deleted account records.
+- Shows the Admin button only when the account document says `role: "admin"`, the email matches the server-side allow-list, and Firebase Auth reports the email as verified.
 - Lets the Admin UI list all `allowed_users` documents, extend expiry, and delete user documents.
 - Fails closed in the browser when the Firestore verification read fails.
 
@@ -22,7 +22,7 @@ The browser is an untrusted client. Hiding the Admin button or checking `role ==
 - Preventing a normal user from changing their own `role` to `admin`.
 - Preventing one user from reading another user's account record.
 
-The registration and auto-provision code legitimately creates a `role: "user"` record from the client. This is safe only if deployed rules restrict self-creation to the authenticated user's own email document, validate the allowed fields and role, and deny client-side role changes. If the deployed rules permit broad writes, privilege escalation may be possible. This is a conditional risk until the live rules are inspected.
+The registration flow creates a `role: "user"` record from the client. The login flow does not create missing records. This is safe only if deployed rules restrict self-creation to the authenticated user's own email document, validate the allowed fields and role, and deny client-side role changes. If the deployed rules permit broad writes, privilege escalation may be possible. This is a conditional risk until the live rules are inspected.
 
 ## Supplied Firestore Rules review
 
@@ -76,4 +76,4 @@ The generated JSON and static website files committed to a public GitHub Pages r
 
 ## Review status
 
-This is a code-level review and migration plan, not a claim that deployed Firebase configuration has been changed. No production Firestore Rules were replaced because the live rules and admin identity were not available for a safe migration.
+This is a code-level review and migration plan, not a claim that deployed Firebase configuration has been changed. The candidate rules and emulator tests are in the review branch only. No production Firestore Rules were replaced because the live rules and admin identity were not available for a safe migration.
