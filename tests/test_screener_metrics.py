@@ -10,6 +10,12 @@ class ScreenerCashConversionTests(unittest.TestCase):
     def test_duplicate_sector_symbol_is_resolved_to_one_intended_group(self):
         self.assertEqual(get_sector("PHR"), "NGUYEN_VAT_LIEU_CHU_KY")
 
+    def test_unclassified_stock_does_not_receive_defensive_sector_points(self):
+        result = evaluate_stock("UNKNOWN", self._stock())
+        self.assertEqual(result["sector"], "CHUA_PHAN_LOAI")
+        self.assertIn("bỏ qua điểm đặc thù ngành", result["fundamental_notes"])
+        self.assertNotIn("LN tăng trưởng tốt", result["fundamental_notes"])
+
     def _stock(self, **overrides):
         data = {
             "pe": 10,
