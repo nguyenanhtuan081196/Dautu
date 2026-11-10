@@ -61,15 +61,18 @@ Important assumption: the provider's period='quarter' cash-flow rows are treated
 - Added firestore.rules candidate: owner-only account get, admin-only collection listing, strict user-only self-registration, seven-day maximum expiry using server request.time, admin-only account updates/deletes, and verified-email requirement for the allow-listed admin.
 - Updated frontend account creation and admin extension to store Firestore Timestamp values instead of ISO strings.
 - Documented migration requirements and deployment blockers in SECURITY_REVIEW.md.
-- Candidate rules are not deployed. Existing ISO expiry records must be migrated; admin email verification and Firebase Emulator tests are required before production rollout.
+- Candidate rules are not deployed. The frontend now denies login when an account record is missing or has invalid expiry, and no longer silently recreates deleted account records.
+- Registration guards the auth-state callback while creating the trial record to avoid a duplicate Firestore write.
+- Added Firebase Emulator authorization tests covering unauthenticated access, owner-only reads, admin-only list, verified-admin requirement, self-registration limits, user update/delete denial, admin operations, and UID-scoped watchlists.
+- CI now runs those emulator tests. Their result must be checked before the rules candidate is considered validated.
 
 ## Confirmed findings requiring a follow-up phase
 
 ### Authentication and authorization
 
-- The repository does not currently contain `firestore.rules` or `firebase.json`, so deployed Firestore security rules cannot be reviewed or version-controlled from this repository.
+- The repository now contains a candidate `firestore.rules` and `firebase.json` emulator configuration. The deployed Firebase rules still cannot be inspected or changed from this repository.
 - The browser currently reads the `allowed_users` document and uses its `role` / `expiresAt` fields to decide what to show. Browser-side checks are not an authorization boundary. Firestore rules or a trusted backend must enforce who can read and modify account records.
-- Registration and account administration write directly from the browser. Before changing this flow, the actual Firestore rules and intended admin bootstrap process must be reviewed.
+- Registration and account administration still write directly from the browser. The candidate rules constrain these writes, but the emulator suite and live Admin bootstrap must be validated before deployment.
 - `login.html` contains a Firebase configuration for a different Firebase project from the generated `index.html`. Confirm whether `login.html` is still deployed/used before aligning or retiring it.
 - Firebase client configuration values are public identifiers, not server secrets. The security boundary must be enforced by Firebase Auth, Firestore Rules, and/or a trusted backend.
 
@@ -89,11 +92,12 @@ Important assumption: the provider's period='quarter' cash-flow rows are treated
 ### CI and runtime
 
 - The existing data-generation workflows write to the same default branch. Their commit/push behavior should be consolidated or made conflict-safe in a separate change after reviewing the PC-side auto-push scripts.
-- The current test workflow checks the new regression tests; it is not a full integration test of data crawling, AI provider calls, Firebase, or the production website.
+- The test workflow checks Python regressions, a Quant Screener smoke test, and candidate Firestore rules in the Emulator. It is not a full integration test of live data crawling, AI provider calls, Firebase Authentication, or the production website.
 - `requirements.txt` already includes `vnstock`; no dependency change was necessary for that package.
 
 ## Validation performed
 
-- CI now compiles Python sources and runs regression tests for configuration validation, CAGR, financial metric aggregation, and screener cash-conversion scoring.
-- The GitHub Actions test workflow will provide a repository-side CI result once this branch's pull request is opened.
-- Production Firebase rules, secrets, and provider data were not accessible through this repository review and have not been changed.
+- CI compiles Python sources and runs regression tests for configuration validation, CAGR, financial metric aggregation, and screener cash-conversion scoring.
+- CI also runs the Quant Screener against checked-in data and the Firestore Rules Emulator authorization suite.
+- The current branch's CI result must be checked after the latest commits; adding a test workflow is not evidence that the tests passed.
+- Production Firebase rules, secrets, deployed Authentication state, and provider credentials were not accessible through this repository review and have not been changed.
