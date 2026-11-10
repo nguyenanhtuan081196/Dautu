@@ -41,6 +41,12 @@ Important assumption: the provider's period='quarter' cash-flow rows are treated
 - Unclassified symbols do not receive the sector-specific score component until their business sector and suitable thresholds are reviewed.
 - Added SECTOR_MAPPING_REVIEW.md with the symbols requiring manual classification.
 
+## Phase 4: non-finite data handling
+
+- Normalize optional CFO, TTM profit, liabilities/equity, and gross-margin fields before screener scoring.
+- Convert NaN and infinite optional metrics to null instead of allowing them into the result payload.
+- Export screener JSON with allow_nan=false so non-standard JSON numbers fail loudly instead of being published.
+
 ## Confirmed findings requiring a follow-up phase
 
 ### Authentication and authorization
