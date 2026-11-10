@@ -32,6 +32,15 @@ Important assumption: the provider's period='quarter' cash-flow rows are treated
 - Data jobs refresh from the latest main revision before running, and failed rebases are no longer swallowed as successful operations.
 - A render workflow run on the maintenance branch exposed the old unsafe rebase/push behavior. It conflicted while rebasing and did not push; branch restrictions and explicit failure handling have since been added.
 
+## Phase 3: sector mapping integrity
+
+- Compared the 99 unique symbols in the BCTC crawler list against the screener's sector map.
+- Found 13 unmapped symbols and one duplicate assignment (PHR).
+- Removed PHR's duplicate real-estate mapping; it now resolves once to cyclical materials.
+- Unmapped symbols now appear as CHUA_PHAN_LOAI instead of being silently assigned to defensive manufacturing/consumer.
+- Unclassified symbols do not receive the sector-specific score component until their business sector and suitable thresholds are reviewed.
+- Added SECTOR_MAPPING_REVIEW.md with the symbols requiring manual classification.
+
 ## Confirmed findings requiring a follow-up phase
 
 ### Authentication and authorization
