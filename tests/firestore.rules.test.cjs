@@ -92,13 +92,16 @@ test('users cannot update or delete account records', async () => {
   await assertFails(db.doc('allowed_users/user@example.com').update({ role: 'admin' }));
   await assertFails(db.doc('allowed_users/user@example.com').delete());
 });
-test('verified admin can extend expiry, update role, and delete a user record', async () => {
+test('verified admin can extend expiry, update role, and revoke access without deleting the record', async () => {
   const db = signedIn(ADMIN_EMAIL, 'admin-verified', true);
   await assertSucceeds(db.doc('allowed_users/user@example.com').update({
     expiresAt: Timestamp.fromMillis(Date.now() + 30 * 86400000),
   }));
   await assertSucceeds(db.doc('allowed_users/user@example.com').update({ role: 'admin' }));
-  await assertSucceeds(db.doc('allowed_users/user@example.com').delete());
+  await assertSucceeds(db.doc('allowed_users/user@example.com').update({
+    expiresAt: Timestamp.fromMillis(0),
+  }));
+  await assertFails(db.doc('allowed_users/user@example.com').delete());
 });
 test('watchlists are restricted to the owning Firebase UID', async () => {
   const owner = signedIn(USER_EMAIL, 'owner-uid');
