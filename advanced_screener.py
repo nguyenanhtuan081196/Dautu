@@ -2,6 +2,7 @@ import os
 import json
 import pandas as pd
 import numpy as np
+import math
 
 DATA_FILE = "data.json"
 OUTPUT_JSON = "screener_results.json"
@@ -18,7 +19,7 @@ SECTOR_MAPPING = {
     ],
     "BAT_DONG_SAN": [
         "VHM", "VIC", "VRE", "NVL", "PDR", "DIG", "NLG", "KDH", "CEO", "DXG",
-        "TCH", "HDG", "KBC", "IDC", "SZC", "BCM", "PHR", "SJS", "VPI"
+        "TCH", "HDG", "KBC", "IDC", "SZC", "BCM", "SJS", "VPI"
     ],
     "CONG_NGHE_BAN_LE": [
         "FPT", "MWG", "PNJ", "FRT", "DGW"
@@ -40,7 +41,15 @@ def get_sector(symbol):
     for sector, symbols in SECTOR_MAPPING.items():
         if symbol in symbols:
             return sector
-    return "SAN_XUAT_TIEU_DUNG_PHONG_THU"
+    return "CHUA_PHAN_LOAI"
+
+def _optional_finite_number(value):
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError):
+        return None
+
 
 def evaluate_stock(symbol, data):
     sector = get_sector(symbol)
@@ -53,11 +62,13 @@ def evaluate_stock(symbol, data):
     close_price = data.get("close", 0)
     
     # Các chỉ số nâng cao lấy từ data.json (đồng bộ với bctc_data đã tối ưu)
-    cfo_latest = data.get("cfo_latest")
-    cfo_ttm = data.get("cfo_ttm")
-    net_profit_ttm = data.get("net_profit_ttm")
-    liabilities_to_equity = data.get("liabilities_to_equity", data.get("debt_to_equity"))
-    gross_margin = data.get("gross_margin", 0)
+    cfo_latest = _optional_finite_number(data.get("cfo_latest"))
+    cfo_ttm = _optional_finite_number(data.get("cfo_ttm"))
+    net_profit_ttm = _optional_finite_number(data.get("net_profit_ttm"))
+    liabilities_to_equity = _optional_finite_number(
+        data.get("liabilities_to_equity", data.get("debt_to_equity"))
+    )
+    gross_margin = _optional_finite_number(data.get("gross_margin"))
 
     bctc_history = data.get("bctc_history", [])
     if not bctc_history:
@@ -137,7 +148,7 @@ def evaluate_stock(symbol, data):
         else:
             fundamental_score += 8
 
-    else: # SAN_XUAT_TIEU_DUNG_PHONG_THU
+    elif sector == "SAN_XUAT_TIEU_DUNG_PHONG_THU":
         if profit_growth_yoy >= 10: 
             fundamental_score += 15; fund_notes.append("LN tăng trưởng tốt")
         elif profit_growth_yoy >= 0:
@@ -147,6 +158,10 @@ def evaluate_stock(symbol, data):
             fundamental_score += 20; fund_notes.append("ROE sản xuất cao (>=14%)")
         elif roe >= 10:
             fundamental_score += 10; fund_notes.append("ROE khá")
+
+    else:
+        # Không gán mã chưa rõ ngành vào nhóm phòng thủ vì sẽ làm sai benchmark ngành.
+        fund_notes.append("Chưa xác thực nhóm ngành: bỏ qua điểm đặc thù ngành")
 
     # --- TIÊU CHÍ CHUNG BỔ SUNG NÂNG CAO (15 điểm) ---
     if roa >= 5.0:
@@ -271,7 +286,7 @@ def main():
     results = sorted(results, key=lambda x: (x.get('fundamental_score', 0), x.get('roe', 0)), reverse=True)
 
     with open(OUTPUT_JSON, "w", encoding="utf-8") as jf:
-        json.dump(results, jf, ensure_ascii=False, indent=4)
+        json.dump(results, jf, ensure_ascii=False, indent=4, allow_nan=False)
         
     df = pd.DataFrame(results)
     df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")

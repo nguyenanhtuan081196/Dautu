@@ -226,6 +226,7 @@
                         <option value="DIEN_NUOC_HA_TANG">Điện, Nước & Hạ tầng</option>
                         <option value="NGUYEN_VAT_LIEU_CHU_KY">Vật liệu & Chu kỳ</option>
                         <option value="SAN_XUAT_TIEU_DUNG_PHONG_THU">Sản xuất & Tiêu dùng</option>
+                        <option value="CHUA_PHAN_LOAI">Chưa phân loại</option>
                     </select>
                     <span class="absolute inset-y-0 right-0 flex items-center pr-2 md:pr-3 text-slate-400 pointer-events-none">
                         <i class="fa-solid fa-chevron-down text-[10px]"></i>
@@ -326,7 +327,7 @@
 
                     <div id="pro-metrics-box" class="hidden mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 bg-slate-950/80 p-3 rounded-xl border border-emerald-500/30 text-center animate-fadeIn">
                         <div>
-                            <span class="text-[10px] text-slate-400 block" id="label-cfo" title="Dòng tiền hoạt động kinh doanh">Dòng tiền CFO</span>
+                            <span class="text-[10px] text-slate-400 block" id="label-cfo" title="Tổng dòng tiền từ hoạt động kinh doanh trong 4 quý gần nhất">CFO TTM (4Q)</span>
                             <span id="modal-cfo" class="text-xs font-bold text-emerald-400">--</span>
                         </div>
                         <div>
@@ -514,67 +515,85 @@
         const auth = firebase.auth();
         const db = firebase.firestore();
 
-        auth.onAuthStateChanged(async (user) => {
+        const ADMIN_EMAIL = 'nguyenanhtuan081196@gmail.com';
+        let registrationInProgress = false;
+
+        async function verifyAuthenticatedUser(user) {
             const authOverlay = document.getElementById('auth-overlay');
             const expiredModal = document.getElementById('expired-modal');
 
-            if (user) {
-                try {
-                    const emailKey = user.email.toLowerCase();
-                    const userDocRef = db.collection('allowed_users').doc(emailKey);
-                    const doc = await userDocRef.get();
+            try {
+                if (!user.email) throw new Error('Tài khoản Firebase không có email.');
 
-                    let userData = {};
-                    if (!doc.exists) {
-                        const expireDate = new Date();
-                        expireDate.setDate(expireDate.getDate() + 7);
-                        userData = {
-                            email: user.email,
-                            role: 'user',
-                            expiresAt: expireDate.toISOString()
-                        };
-                        await userDocRef.set(userData);
-                    } else {
-                        userData = doc.data();
-                    }
+                const emailKey = user.email.toLowerCase();
+                const doc = await db.collection('allowed_users').doc(emailKey).get();
 
-                    const now = new Date();
-                    const expireTime = parseDate(userData.expiresAt);
-
-                    if (expireTime && now > expireTime && userData.role !== 'admin') {
-                        authOverlay.classList.add('hidden');
-                        expiredModal.classList.remove('hidden');
-                        document.getElementById('user-uid-text').innerText = user.uid;
-                        await auth.signOut();
-                        return;
-                    } else {
-                        authOverlay.classList.add('hidden');
-                        expiredModal.classList.add('hidden');
-                    }
-
-                    if (userData.role === 'admin') {
-                        const adminBtn = document.getElementById('btn-admin-panel');
-                        if (adminBtn) {
-                            adminBtn.classList.remove('hidden');
-                            adminBtn.classList.add('flex');
-                        }
-                    }
-                } catch (err) {
-                    console.error("Không thể xác minh quyền truy cập qua Firestore:", err);
+                // Missing records must not be silently recreated at login:
+                // otherwise deleting a user record would not revoke access.
+                if (!doc.exists) {
                     authOverlay.classList.remove('hidden');
+                    expiredModal.classList.add('hidden');
                     const authError = document.getElementById('login-error');
                     if (authError) {
-                        authError.innerText = "Không thể xác minh quyền truy cập. Vui lòng kiểm tra kết nối và thử lại.";
+                        authError.innerText = 'Tài khoản chưa được cấp quyền sử dụng. Vui lòng liên hệ Admin.';
                         authError.classList.remove('hidden');
                     }
-                    return; // Fail closed: tuyệt đối không tải dữ liệu khi chưa xác minh được quyền.
+                    await auth.signOut();
+                    return false;
+                }
+
+                const userData = doc.data();
+                const expireTime = parseDate(userData.expiresAt);
+                const isAdminAccount = emailKey === ADMIN_EMAIL
+                    && user.emailVerified === true
+                    && userData.role === 'admin';
+
+                if (!isAdminAccount && (!expireTime || new Date() > expireTime)) {
+                    authOverlay.classList.add('hidden');
+                    expiredModal.classList.remove('hidden');
+                    document.getElementById('user-uid-text').innerText = user.uid;
+                    await auth.signOut();
+                    return false;
+                }
+
+                authOverlay.classList.add('hidden');
+                expiredModal.classList.add('hidden');
+
+                const adminBtn = document.getElementById('btn-admin-panel');
+                if (adminBtn) {
+                    if (isAdminAccount) {
+                        adminBtn.classList.remove('hidden');
+                        adminBtn.classList.add('flex');
+                    } else {
+                        adminBtn.classList.add('hidden');
+                        adminBtn.classList.remove('flex');
+                    }
                 }
 
                 loadData(true);
-
-            } else {
+                return true;
+            } catch (err) {
+                console.error('Không thể xác minh quyền truy cập qua Firestore:', err);
                 authOverlay.classList.remove('hidden');
-                expiredModal.classList.add('hidden');
+                const authError = document.getElementById('login-error');
+                if (authError) {
+                    authError.innerText = 'Không thể xác minh quyền truy cập. Vui lòng kiểm tra kết nối và thử lại.';
+                    authError.classList.remove('hidden');
+                }
+                if (auth.currentUser) await auth.signOut();
+                return false;
+            }
+        }
+
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                // Registration writes the account document before verification.
+                // Skip this first auth event to avoid racing the registration write.
+                if (registrationInProgress) return;
+                await verifyAuthenticatedUser(user);
+            } else {
+                document.getElementById('auth-overlay').classList.remove('hidden');
+                document.getElementById('expired-modal').classList.add('hidden');
             }
         });
 
@@ -620,24 +639,38 @@
 
         async function handleRegister(e) {
             e.preventDefault();
-            const email = document.getElementById('reg-email').value;
+            const email = document.getElementById('reg-email').value.trim();
             const pass = document.getElementById('reg-password').value;
             const errBox = document.getElementById('register-error');
             errBox.classList.add('hidden');
 
+            registrationInProgress = true;
+            let createdUser = null;
             try {
                 const cred = await auth.createUserWithEmailAndPassword(email, pass);
+                createdUser = cred.user;
+
                 const expireDate = new Date();
                 expireDate.setDate(expireDate.getDate() + 7);
                 await db.collection('allowed_users').doc(email.toLowerCase()).set({
                     email: email,
                     role: 'user',
-                    expiresAt: expireDate.toISOString()
+                    expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
-                alert("Đăng ký thành công tài khoản trải nghiệm 7 ngày!");
+
+                registrationInProgress = false;
+                const verified = await verifyAuthenticatedUser(createdUser);
+                if (verified) {
+                    alert('Đăng ký thành công tài khoản trải nghiệm 7 ngày!');
+                }
             } catch (err) {
-                errBox.innerText = "Lỗi đăng ký: " + err.message;
+                console.error('Đăng ký tài khoản thất bại:', err);
+                errBox.innerText = 'Lỗi đăng ký: ' + err.message
+                    + (createdUser ? ' Tài khoản đăng nhập đã được tạo; vui lòng liên hệ Admin để hoàn tất cấp quyền.' : '');
                 errBox.classList.remove('hidden');
+                if (auth.currentUser) await auth.signOut();
+            } finally {
+                registrationInProgress = false;
             }
         }
 
@@ -691,14 +724,22 @@
                     const tr = document.createElement('tr');
                     tr.className = "hover:bg-slate-800/50 transition";
                     tr.innerHTML = `
-                        <td class="p-3 font-semibold text-white">${data.email || doc.id}</td>
-                        <td class="p-3 text-slate-300">${expDate ? expDate.toLocaleDateString('vi-VN') : '—'}</td>
-                        <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${data.role === 'admin' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">${data.role || 'user'}</span></td>
+                        <td class="p-3 font-semibold text-white"><span class="user-email"></span></td>
+                        <td class="p-3 text-slate-300 user-expiry"></td>
+                        <td class="p-3"><span class="user-role px-2 py-0.5 rounded text-[10px] font-bold"></span></td>
                         <td class="p-3 text-right">
-                            <button onclick="extendUser('${doc.id}')" class="text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3">+30 Ngày</button>
-                            <button onclick="deleteUser('${doc.id}')" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Xóa</button>
+                            <button type="button" data-action="extend" class="text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3">+30 Ngày</button>
+                            <button type="button" data-action="suspend" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Khóa</button>
                         </td>
                     `;
+                    tr.querySelector('.user-email').textContent = data.email || doc.id;
+                    tr.querySelector('.user-expiry').textContent = expDate ? expDate.toLocaleDateString('vi-VN') : '—';
+                    const roleBadge = tr.querySelector('.user-role');
+                    roleBadge.textContent = data.role || 'user';
+                    roleBadge.classList.add(data.role === 'admin' ? 'bg-amber-500/20' : 'bg-slate-800');
+                    roleBadge.classList.add(data.role === 'admin' ? 'text-amber-300' : 'text-slate-300');
+                    tr.querySelector('[data-action="extend"]').addEventListener('click', () => extendUser(doc.id));
+                    tr.querySelector('[data-action="suspend"]').addEventListener('click', () => suspendUser(doc.id));
                     listEl.appendChild(tr);
                 });
             } catch (err) {
@@ -713,16 +754,22 @@
                 let currentExpire = parseDate(doc.data().expiresAt) || new Date();
                 if (currentExpire < new Date()) currentExpire = new Date();
                 currentExpire.setDate(currentExpire.getDate() + 30);
-                await docRef.update({ expiresAt: currentExpire.toISOString() });
+                await docRef.update({ expiresAt: firebase.firestore.Timestamp.fromDate(currentExpire) });
                 alert(`Đã gia hạn +30 ngày cho ${email}`);
                 openAdminModal();
             }
         }
 
-        async function deleteUser(email) {
-            if (confirm(`Bạn có chắc chắn muốn xóa tài khoản ${email}?`)) {
-                await db.collection('allowed_users').doc(email).delete();
-                alert(`Đã xóa ${email}`);
+        async function suspendUser(email) {
+            if (email.toLowerCase() === ADMIN_EMAIL) {
+                alert('Không thể khóa tài khoản Admin đang được dùng để quản trị.');
+                return;
+            }
+            if (confirm(`Bạn có chắc chắn muốn khóa quyền truy cập của ${email}?`)) {
+                await db.collection('allowed_users').doc(email).update({
+                    expiresAt: firebase.firestore.Timestamp.fromDate(new Date(0))
+                });
+                alert(`Đã khóa quyền truy cập của ${email}. Có thể mở lại bằng cách gia hạn.`);
                 openAdminModal();
             }
         }
@@ -749,6 +796,7 @@
             "DIEN_NUOC_HA_TANG": "Điện, Nước & Hạ tầng",
             "NGUYEN_VAT_LIEU_CHU_KY": "Vật liệu & Chu kỳ",
             "SAN_XUAT_TIEU_DUNG_PHONG_THU": "Sản xuất & Tiêu dùng",
+            "CHUA_PHAN_LOAI": "Chưa phân loại",
             "KHAC": "Khác"
         };
 
@@ -844,10 +892,12 @@
                         pb: extraData.pb !== undefined ? extraData.pb : item.pb,
                         roe: extraData.roe !== undefined ? extraData.roe : item.roe,
                         roa: extraData.roa !== undefined ? extraData.roa : item.roa,
-                        cfo_latest: extraData.cfo_latest !== undefined ? extraData.cfo_latest : (item.cfo_latest || 0),
-                        debt_to_equity: extraData.debt_to_equity !== undefined ? extraData.debt_to_equity : (item.debt_to_equity || 0),
-                        gross_margin: extraData.gross_margin !== undefined ? extraData.gross_margin : (item.gross_margin || 0),
-                        net_profit_ttm: extraData.net_profit_ttm !== undefined ? extraData.net_profit_ttm : (item.net_profit_ttm || 0),
+                        cfo_latest: extraData.cfo_latest !== undefined ? extraData.cfo_latest : item.cfo_latest,
+                        cfo_ttm: extraData.cfo_ttm !== undefined ? extraData.cfo_ttm : item.cfo_ttm,
+                        debt_to_equity: extraData.debt_to_equity !== undefined ? extraData.debt_to_equity : item.debt_to_equity,
+                        liabilities_to_equity: extraData.liabilities_to_equity !== undefined ? extraData.liabilities_to_equity : item.liabilities_to_equity,
+                        gross_margin: extraData.gross_margin !== undefined ? extraData.gross_margin : item.gross_margin,
+                        net_profit_ttm: extraData.net_profit_ttm !== undefined ? extraData.net_profit_ttm : item.net_profit_ttm,
                         close_price: extraData.close !== undefined ? extraData.close : item.close_price,
 
                         bctc: extraData.bctc_evaluation || extraData.bctc || item.bctc_evaluation || item.bctc || "",
@@ -1007,20 +1057,15 @@
 
             const isBankOrSec = (item.sector === "NGAN_HANG" || item.sector === "CHUNG_KHOAN");
 
-            document.getElementById('modal-cfo').innerText = (item.cfo_latest !== undefined && item.cfo_latest !== null) ? item.cfo_latest + ' Tỷ' : '—';
+            document.getElementById('modal-cfo').innerText = (item.cfo_ttm !== undefined && item.cfo_ttm !== null) ? item.cfo_ttm + ' Tỷ' : 'Chưa đủ 4 quý';
             document.getElementById('modal-ttm').innerText = (item.net_profit_ttm !== undefined && item.net_profit_ttm !== null) ? item.net_profit_ttm + ' Tỷ' : '—';
 
             const deLabel = document.getElementById('label-de');
             const deVal = document.getElementById('modal-de');
-            if (isBankOrSec) {
-                deLabel.innerText = "Hệ số T.Sản/VCSH";
-                deLabel.title = "Đòn bẩy đặc thù Ngân hàng/Chứng khoán";
-                deVal.innerText = (item.debt_to_equity !== undefined && item.debt_to_equity !== null) ? item.debt_to_equity + 'x (Nợ/VCSH)' : '—';
-            } else {
-                deLabel.innerText = "Đòn bẩy D/E";
-                deLabel.title = "Nợ phải trả / Vốn chủ sở hữu";
-                deVal.innerText = (item.debt_to_equity !== undefined && item.debt_to_equity !== null) ? item.debt_to_equity : '—';
-            }
+            deLabel.innerText = "Nợ phải trả/VCSH";
+            deLabel.title = "Tổng nợ phải trả chia vốn chủ sở hữu; không đồng nghĩa với nợ vay có lãi/VCSH.";
+            const liabilitiesEquity = item.liabilities_to_equity ?? item.debt_to_equity;
+            deVal.innerText = (liabilitiesEquity !== undefined && liabilitiesEquity !== null) ? liabilitiesEquity + 'x' : '—';
 
             const gmLabel = document.getElementById('label-gm');
             const gmVal = document.getElementById('modal-gm');

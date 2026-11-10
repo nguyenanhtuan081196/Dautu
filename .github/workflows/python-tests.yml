@@ -21,5 +21,28 @@ jobs:
           python-version: "3.11"
       - name: Install test dependency
         run: python -m pip install pandas
+      - name: Compile Python sources
+        run: python -m compileall -q .
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+      - name: Run Quant Screener smoke test against repository data
+        run: python advanced_screener.py
+
+  firestore-rules-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Set up Java for Firebase Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install Firebase test dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run Firestore Rules Emulator tests
+        run: npm run test:rules

@@ -3,6 +3,7 @@ name: Render UI & Calculate Rates Automatically
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'render_ui.py'
       - 'simulator.py'
@@ -13,12 +14,22 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: dautu-render-main
+  cancel-in-progress: false
+
 jobs:
   render-and-simulate:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
+      - name: Refresh production branch
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -55,6 +66,6 @@ jobs:
           git commit -m "📊 Auto-calculate symbol rates & details, then render index.html via Python" || echo "No changes to commit"
 
           # Kéo thay đổi mới nhất từ remote về để tránh lỗi conflict/reject
-          git pull --rebase origin main || echo "No rebase needed or handled"
+          git pull --rebase origin main
 
           git push

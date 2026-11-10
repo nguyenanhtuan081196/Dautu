@@ -35,8 +35,13 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: dautu-data-main
+  cancel-in-progress: false
+
 jobs:
   ai-analysis:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -44,6 +49,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Refresh production branch
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -79,5 +89,7 @@ jobs:
           else
             LABEL="${{ inputs.symbols || (inputs.mode == 'rest' && format('Rest batch {0}/{1}', inputs.batch, inputs.total_batches)) || 'Top ngành tự động' }}"
             git commit -m "🤖 [AI Analysis] ${LABEL} [$(date +'%Y-%m-%d %H:%M')]"
-            git push
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
           fi

@@ -2,12 +2,18 @@ name: 1. Run Quant Screener
 
 on:
   push:
+    branches: [main]
     paths:
       - 'last_update.json' # Kích hoạt khi file last_update.json thay đổi trên nhánh chính
   workflow_dispatch: # Vẫn giữ lại tùy chọn chạy thủ công
 
+concurrency:
+  group: dautu-data-main
+  cancel-in-progress: false
+
 jobs:
   screener:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -15,6 +21,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Refresh production branch
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -42,6 +53,6 @@ jobs:
           git commit -m "📊 [Screener] Cập nhật kết quả định lượng mới [$(date +'%Y-%m-%d')]"
           
           # Kéo các thay đổi mới nhất từ remote về (rebase) để tránh lỗi xung đột/từ chối đẩy
-          git pull --rebase origin main || echo "No rebase needed or handled"
+          git pull --rebase origin main
           
           git push origin main
