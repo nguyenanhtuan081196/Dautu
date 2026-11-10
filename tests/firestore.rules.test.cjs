@@ -13,7 +13,6 @@ const ADMIN_EMAIL = 'nguyenanhtuan081196@gmail.com';
 const USER_EMAIL = 'user@example.com';
 const OTHER_EMAIL = 'other@example.com';
 let testEnv;
-let adminDb;
 
 before(async () => {
   testEnv = await initializeTestEnvironment({
@@ -22,28 +21,30 @@ before(async () => {
       rules: fs.readFileSync(path.join(__dirname, '..', 'firestore.rules'), 'utf8'),
     },
   });
-  // Create one privileged Firestore client before any reads/writes so its
-  // emulator settings are not mutated after the client starts.
-  await testEnv.withSecurityRulesDisabled(async (context) => {
-    adminDb = context.firestore();
-  });
 });
 after(async () => testEnv.cleanup());
 beforeEach(async () => {
-  await Promise.all([
-    'allowed_users/user@example.com',
-    'allowed_users/other@example.com',
-    'allowed_users/nguyenanhtuan081196@gmail.com',
-    'watchlists/owner-uid',
-    'watchlists/stranger-uid',
-  ].map((documentPath) => adminDb.doc(documentPath).delete()));
-  await adminDb.doc('allowed_users/user@example.com').set({
-    email: USER_EMAIL, role: 'user',
-    expiresAt: Timestamp.fromMillis(Date.now() + 2 * 86400000),
-  });
-  await adminDb.doc('allowed_users/nguyenanhtuan081196@gmail.com').set({
-    email: ADMIN_EMAIL, role: 'admin',
-    expiresAt: Timestamp.fromMillis(Date.now() + 30 * 86400000),
+  // Seed and clear only the documents used by this suite inside a fresh
+  // privileged context. Do not call clearFirestore(), which initializes a
+  // Firestore client before the rules-disabled context is created.
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      'allowed_users/user@example.com',
+      'allowed_users/other@example.com',
+      'allowed_users/nguyenanhtuan081196@gmail.com',
+      'watchlists/owner-uid',
+      'watchlists/stranger-uid',
+    ].map((documentPath) => db.doc(documentPath).delete()));
+
+    await db.doc('allowed_users/user@example.com').set({
+      email: USER_EMAIL, role: 'user',
+      expiresAt: Timestamp.fromMillis(Date.now() + 2 * 86400000),
+    });
+    await db.doc('allowed_users/nguyenanhtuan081196@gmail.com').set({
+      email: ADMIN_EMAIL, role: 'admin',
+      expiresAt: Timestamp.fromMillis(Date.now() + 30 * 86400000),
+    });
   });
 });
 
