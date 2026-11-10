@@ -47,6 +47,13 @@ Important assumption: the provider's period='quarter' cash-flow rows are treated
 - Convert NaN and infinite optional metrics to null instead of allowing them into the result payload.
 - Export screener JSON with allow_nan=false so non-standard JSON numbers fail loudly instead of being published.
 
+## Phase 5: duplicate-period safeguards and authentication review
+
+- Quarterly cash-flow and net-profit extraction now rejects duplicate observations for the same quarter instead of silently taking the first row.
+- Added regression coverage to ensure duplicate CFO or profit observations invalidate the affected latest-quarter/TTM metric.
+- Added SECURITY_REVIEW.md documenting the verified browser-side auth flow, the conditional privilege-escalation risk if Firestore rules are permissive, the target authorization model, and a safe migration checklist.
+- No production Firestore Rules were changed: deployed rules and trusted admin identity are not accessible from this repository review.
+
 ## Confirmed findings requiring a follow-up phase
 
 ### Authentication and authorization
