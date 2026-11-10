@@ -18,7 +18,7 @@ SECTOR_MAPPING = {
     ],
     "BAT_DONG_SAN": [
         "VHM", "VIC", "VRE", "NVL", "PDR", "DIG", "NLG", "KDH", "CEO", "DXG",
-        "TCH", "HDG", "KBC", "IDC", "SZC", "BCM", "PHR", "SJS", "VPI"
+        "TCH", "HDG", "KBC", "IDC", "SZC", "BCM", "SJS", "VPI"
     ],
     "CONG_NGHE_BAN_LE": [
         "FPT", "MWG", "PNJ", "FRT", "DGW"
@@ -40,7 +40,7 @@ def get_sector(symbol):
     for sector, symbols in SECTOR_MAPPING.items():
         if symbol in symbols:
             return sector
-    return "SAN_XUAT_TIEU_DUNG_PHONG_THU"
+    return "CHUA_PHAN_LOAI"
 
 def evaluate_stock(symbol, data):
     sector = get_sector(symbol)
@@ -137,7 +137,7 @@ def evaluate_stock(symbol, data):
         else:
             fundamental_score += 8
 
-    else: # SAN_XUAT_TIEU_DUNG_PHONG_THU
+    elif sector == "SAN_XUAT_TIEU_DUNG_PHONG_THU":
         if profit_growth_yoy >= 10: 
             fundamental_score += 15; fund_notes.append("LN tăng trưởng tốt")
         elif profit_growth_yoy >= 0:
@@ -147,6 +147,10 @@ def evaluate_stock(symbol, data):
             fundamental_score += 20; fund_notes.append("ROE sản xuất cao (>=14%)")
         elif roe >= 10:
             fundamental_score += 10; fund_notes.append("ROE khá")
+
+    else:
+        # Không gán mã chưa rõ ngành vào nhóm phòng thủ vì sẽ làm sai benchmark ngành.
+        fund_notes.append("Chưa xác thực nhóm ngành: bỏ qua điểm đặc thù ngành")
 
     # --- TIÊU CHÍ CHUNG BỔ SUNG NÂNG CAO (15 điểm) ---
     if roa >= 5.0:
