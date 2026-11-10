@@ -90,6 +90,11 @@ test('self-registration rejects admin role, extra fields, past expiry, and expir
 test('users cannot update or delete account records', async () => {
   const db = signedIn(USER_EMAIL);
   await assertFails(db.doc('allowed_users/user@example.com').update({ role: 'admin' }));
+  await assertFails(db.doc('allowed_users/user@example.com').set({
+    email: USER_EMAIL,
+    role: 'user',
+    expiresAt: Timestamp.fromMillis(Date.now() + 6 * 86400000),
+  }));
   await assertFails(db.doc('allowed_users/user@example.com').delete());
 });
 test('verified admin can extend expiry, update role, and revoke access without deleting the record', async () => {
