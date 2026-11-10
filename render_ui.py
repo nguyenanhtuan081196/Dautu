@@ -272,6 +272,7 @@ def generate_html():
                         <option value="DIEN_NUOC_HA_TANG">Điện, Nước & Hạ tầng</option>
                         <option value="NGUYEN_VAT_LIEU_CHU_KY">Vật liệu & Chu kỳ</option>
                         <option value="SAN_XUAT_TIEU_DUNG_PHONG_THU">Sản xuất & Tiêu dùng</option>
+                        <option value="CHUA_PHAN_LOAI">Chưa phân loại</option>
                     </select>
                     <span class="absolute inset-y-0 right-0 flex items-center pr-2 md:pr-3 text-slate-400 pointer-events-none">
                         <i class="fa-solid fa-chevron-down text-[10px]"></i>
@@ -795,6 +796,7 @@ def generate_html():
             "DIEN_NUOC_HA_TANG": "Điện, Nước & Hạ tầng",
             "NGUYEN_VAT_LIEU_CHU_KY": "Vật liệu & Chu kỳ",
             "SAN_XUAT_TIEU_DUNG_PHONG_THU": "Sản xuất & Tiêu dùng",
+            "CHUA_PHAN_LOAI": "Chưa phân loại",
             "KHAC": "Khác"
         };
 
