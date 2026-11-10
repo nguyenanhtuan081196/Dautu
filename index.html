@@ -729,7 +729,7 @@
                         <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${data.role === 'admin' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">${data.role || 'user'}</span></td>
                         <td class="p-3 text-right">
                             <button onclick="extendUser('${doc.id}')" class="text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3">+30 Ngày</button>
-                            <button onclick="deleteUser('${doc.id}')" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Xóa</button>
+                            <button onclick="suspendUser('${doc.id}')" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Khóa</button>
                         </td>
                     `;
                     listEl.appendChild(tr);
@@ -752,10 +752,16 @@
             }
         }
 
-        async function deleteUser(email) {
-            if (confirm(`Bạn có chắc chắn muốn xóa tài khoản ${email}?`)) {
-                await db.collection('allowed_users').doc(email).delete();
-                alert(`Đã xóa ${email}`);
+        async function suspendUser(email) {
+            if (email.toLowerCase() === ADMIN_EMAIL) {
+                alert('Không thể khóa tài khoản Admin đang được dùng để quản trị.');
+                return;
+            }
+            if (confirm(`Bạn có chắc chắn muốn khóa quyền truy cập của ${email}?`)) {
+                await db.collection('allowed_users').doc(email).update({
+                    expiresAt: firebase.firestore.Timestamp.fromDate(new Date(0))
+                });
+                alert(`Đã khóa quyền truy cập của ${email}. Có thể mở lại bằng cách gia hạn.`);
                 openAdminModal();
             }
         }
