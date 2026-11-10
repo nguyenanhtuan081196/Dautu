@@ -77,3 +77,10 @@ The generated JSON and static website files committed to a public GitHub Pages r
 ## Review status
 
 This is a code-level review and migration plan, not a claim that deployed Firebase configuration has been changed. The candidate rules and emulator tests are in the review branch only. No production Firestore Rules were replaced because the live rules and admin identity were not available for a safe migration.
+
+
+## Legacy login page consolidation
+
+A follow-up repository check found that the root `login.html` was a stale, separately accessible copy of the application. It initialized a different Firebase project (`hoc-tieng-trung-64b8d`), used the `users/{uid}` collection for signup while reading `allowed_users/{email}` for authorization, and continued loading screener data after Firestore authorization errors. This page could confuse users and bypass the hardened behavior in the canonical `index.html` if opened directly.
+
+The maintenance branch now replaces `login.html` with a redirect to `index.html`, preserving query parameters and URL fragments. The canonical generated app and Firebase project remain the only supported entry point. This is a static-site code change only; it does not alter Firebase Auth users, Firestore data, or deployed Firestore Rules.
