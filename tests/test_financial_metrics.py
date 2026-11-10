@@ -10,10 +10,10 @@ from financial_metrics import extract_advanced_metrics_from_bctc
 class FinancialMetricsTests(unittest.TestCase):
     def _write_report(self, folder, cash_periods=None, profit_periods=None):
         cash_periods = cash_periods or {
-            "2025-Q4": 10, "2026-Q1": 20, "2026-Q2": -5, "2026-Q3": 15
+            "2025-Q4": 10_000_000_000, "2026-Q1": 20_000_000_000, "2026-Q2": -5_000_000_000, "2026-Q3": 15_000_000_000
         }
         profit_periods = profit_periods or {
-            "2025-Q4": 8, "2026-Q1": 9, "2026-Q2": 10, "2026-Q3": 11
+            "2025-Q4": 8_000_000_000, "2026-Q1": 9_000_000_000, "2026-Q2": 10_000_000_000, "2026-Q3": 11_000_000_000
         }
         periods = sorted(set(cash_periods) | set(profit_periods), reverse=True)
         report = {
@@ -36,16 +36,16 @@ class FinancialMetricsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             self._write_report(folder)
             result = extract_advanced_metrics_from_bctc("TEST", folder)
-            self.assertEqual(result["cfo_ttm"], 40 / 1e9)
-            self.assertEqual(result["net_profit_ttm"], 38 / 1e9)
-            self.assertEqual(result["cfo_latest"], 15 / 1e9)
+            self.assertEqual(result["cfo_ttm"], 40.0)
+            self.assertEqual(result["net_profit_ttm"], 38.0)
+            self.assertEqual(result["cfo_latest"], 15.0)
             self.assertEqual(result["liabilities_to_equity"], 1.5)
             self.assertEqual(result["debt_to_equity"], 1.5)
 
     def test_missing_quarter_does_not_create_false_ttm(self):
         with tempfile.TemporaryDirectory() as folder:
             self._write_report(folder, cash_periods={
-                "2025-Q4": 10, "2026-Q1": 20, "2026-Q3": 15
+                "2025-Q4": 10_000_000_000, "2026-Q1": 20_000_000_000, "2026-Q3": 15_000_000_000
             })
             result = extract_advanced_metrics_from_bctc("TEST", folder)
             self.assertIsNone(result["cfo_ttm"])
@@ -54,7 +54,7 @@ class FinancialMetricsTests(unittest.TestCase):
     def test_latest_cfo_does_not_fall_back_to_an_older_quarter(self):
         with tempfile.TemporaryDirectory() as folder:
             self._write_report(folder, cash_periods={
-                "2025-Q4": 10, "2026-Q1": 20, "2026-Q2": -5
+                "2025-Q4": 10_000_000_000, "2026-Q1": 20_000_000_000, "2026-Q2": -5_000_000_000
             })
             result = extract_advanced_metrics_from_bctc("TEST", folder)
             self.assertIsNone(result["cfo_latest"])
