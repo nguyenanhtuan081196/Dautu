@@ -54,6 +54,15 @@ Important assumption: the provider's period='quarter' cash-flow rows are treated
 - Added SECURITY_REVIEW.md documenting the verified browser-side auth flow, the conditional privilege-escalation risk if Firestore rules are permissive, the target authorization model, and a safe migration checklist.
 - No production Firestore Rules were changed: deployed rules and trusted admin identity are not accessible from this repository review.
 
+## Phase 6: Firestore rules hardening candidate
+
+- Reviewed the Firestore Rules supplied by the repository owner.
+- Identified broad signed-in reads of all allowed_users documents, unconstrained client-supplied expiry on create, and overly broad owner updates.
+- Added firestore.rules candidate: owner-only account get, admin-only collection listing, strict user-only self-registration, seven-day maximum expiry using server request.time, admin-only account updates/deletes, and verified-email requirement for the allow-listed admin.
+- Updated frontend account creation and admin extension to store Firestore Timestamp values instead of ISO strings.
+- Documented migration requirements and deployment blockers in SECURITY_REVIEW.md.
+- Candidate rules are not deployed. Existing ISO expiry records must be migrated; admin email verification and Firebase Emulator tests are required before production rollout.
+
 ## Confirmed findings requiring a follow-up phase
 
 ### Authentication and authorization
