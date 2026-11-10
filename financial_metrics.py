@@ -52,6 +52,7 @@ def extract_advanced_metrics_from_bctc(symbol, bctc_dir="bctc_data"):
     def quarterly_values(rows, ids):
         # Use one recognized line item per period and reject duplicate periods.
         values = {}
+        duplicates = set()
         for row in rows:
             if row.get("id") not in ids:
                 continue
@@ -60,8 +61,15 @@ def extract_advanced_metrics_from_bctc(symbol, bctc_dir="bctc_data"):
             value = finite_value(row.get("value"))
             if ordinal is None or value is None:
                 continue
-            if ordinal not in values:
-                values[ordinal] = (str(period), value)
+            if ordinal in duplicates:
+                continue
+            if ordinal in values:
+                # Duplicate observations for one quarter are ambiguous (e.g. a restatement
+                # or mixed provider series). Do not silently choose whichever row appears first.
+                values.pop(ordinal, None)
+                duplicates.add(ordinal)
+                continue
+            values[ordinal] = (str(period), value)
         return values
 
     bs_periods = [period_number(row.get("period")) for row in balance_sheet]
