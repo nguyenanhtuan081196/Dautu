@@ -8,20 +8,20 @@
 
 #AI
 1. Chạy top đầu mỗi ngành (khoảng 35 mã, không chia batch):
-python ai_analysis.py --mode top
+python analyze_ai.py --mode top
  
 2. Chạy phần còn lại, chia 5 batch — lần lượt:
-python ai_analysis.py --mode rest --total-batches 5 --batch 1
-python ai_analysis.py --mode rest --total-batches 5 --batch 2
-python ai_analysis.py --mode rest --total-batches 5 --batch 3
-python ai_analysis.py --mode rest --total-batches 5 --batch 4
-python ai_analysis.py --mode rest --total-batches 5 --batch 5
+python analyze_ai.py --mode rest --total-batches 5 --batch 1
+python analyze_ai.py --mode rest --total-batches 5 --batch 2
+python analyze_ai.py --mode rest --total-batches 5 --batch 3
+python analyze_ai.py --mode rest --total-batches 5 --batch 4
+python analyze_ai.py --mode rest --total-batches 5 --batch 5
  
 3. Chạy tất cả một lần (top trước, rồi hết phần còn lại nếu chỉ 1 batch):
-python ai_analysis.py --mode all --total-batches 1
+python analyze_ai.py --mode all --total-batches 1
  
 4. Chạy theo danh sách nhập tay qua biến môi trường (như cũ):
-INPUT_SYMBOLS="ACB,FPT,MWG" python ai_analysis.py
+INPUT_SYMBOLS="ACB,FPT,MWG" python analyze_ai.py
 
 #Workflow
 1. Nếu bạn muốn chạy phân tích lại 34 mã Top đầu (mỗi ngành 5 mã)
@@ -54,3 +54,15 @@ Giả sử bạn muốn chạy lần 1 (khoảng 13-14 mã):
 • batch / total_batches: Để 1.
 • force: Tích chọn.
 👉 Bấm Run workflow. 
+
+
+## Development and quality checks
+
+- Python dependencies are listed in `requirements.txt`; install them with `python -m pip install -r requirements.txt`.
+- Run the test suite with `python -m unittest discover -s tests -v`.
+- Generated Python bytecode, local virtual environments, and local environment files should not be committed.
+- Historical CAGR in `simulator.py` is calculated from the quarterly mean prices without an arbitrary percentage cap. Invalid or non-positive prices are excluded rather than converted into misleading returns.
+
+## Data-quality note
+
+The current fundamental pipeline still needs a source-aware review of quarterly versus year-to-date cash-flow values before CFO is compared with TTM net profit. Until the reporting-period semantics are verified against actual provider payloads, do not interpret the current CFO score as a validated TTM cash-conversion ratio.
