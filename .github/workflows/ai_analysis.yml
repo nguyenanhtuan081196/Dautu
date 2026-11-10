@@ -78,13 +78,13 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          git fetch origin main
-          git rebase origin/main
           git add data.json
           if git diff --quiet && git diff --staged --quiet; then
             echo "Không có thay đổi để commit."
           else
             LABEL="${{ inputs.symbols || (inputs.mode == 'rest' && format('Rest batch {0}/{1}', inputs.batch, inputs.total_batches)) || 'Top ngành tự động' }}"
             git commit -m "🤖 [AI Analysis] ${LABEL} [$(date +'%Y-%m-%d %H:%M')]"
-            git push
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
           fi
