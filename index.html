@@ -724,14 +724,22 @@
                     const tr = document.createElement('tr');
                     tr.className = "hover:bg-slate-800/50 transition";
                     tr.innerHTML = `
-                        <td class="p-3 font-semibold text-white">${data.email || doc.id}</td>
-                        <td class="p-3 text-slate-300">${expDate ? expDate.toLocaleDateString('vi-VN') : '—'}</td>
-                        <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${data.role === 'admin' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">${data.role || 'user'}</span></td>
+                        <td class="p-3 font-semibold text-white"><span class="user-email"></span></td>
+                        <td class="p-3 text-slate-300 user-expiry"></td>
+                        <td class="p-3"><span class="user-role px-2 py-0.5 rounded text-[10px] font-bold"></span></td>
                         <td class="p-3 text-right">
-                            <button onclick="extendUser('${doc.id}')" class="text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3">+30 Ngày</button>
-                            <button onclick="suspendUser('${doc.id}')" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Khóa</button>
+                            <button type="button" data-action="extend" class="text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3">+30 Ngày</button>
+                            <button type="button" data-action="suspend" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Khóa</button>
                         </td>
                     `;
+                    tr.querySelector('.user-email').textContent = data.email || doc.id;
+                    tr.querySelector('.user-expiry').textContent = expDate ? expDate.toLocaleDateString('vi-VN') : '—';
+                    const roleBadge = tr.querySelector('.user-role');
+                    roleBadge.textContent = data.role || 'user';
+                    roleBadge.classList.add(data.role === 'admin' ? 'bg-amber-500/20' : 'bg-slate-800');
+                    roleBadge.classList.add(data.role === 'admin' ? 'text-amber-300' : 'text-slate-300');
+                    tr.querySelector('[data-action="extend"]').addEventListener('click', () => extendUser(doc.id));
+                    tr.querySelector('[data-action="suspend"]').addEventListener('click', () => suspendUser(doc.id));
                     listEl.appendChild(tr);
                 });
             } catch (err) {
