@@ -1,39 +1,23 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function isSignedIn() {
-      return request.auth != null
-        && request.auth.token.email != null;
+      return request.auth != null && request.auth.token.email != null;
     }
-
     function userEmail() {
       return request.auth.token.email.lower();
     }
-
-    // Keep the administrator allow-list server-enforced.
-    // Requiring a verified email prevents an unverified Auth account
-    // from claiming this address and gaining admin access.
     function isAdmin() {
       return isSignedIn()
         && request.auth.token.email_verified == true
         && userEmail() == 'nguyenanhtuan081196@gmail.com';
     }
-
     function isOwner(email) {
       return isSignedIn() && userEmail() == email.lower();
     }
-
     match /allowed_users/{email} {
-      // A normal user can fetch only their own account document.
-      // Collection listing (used by the Admin panel) is admin-only.
       allow get: if isAdmin() || isOwner(email);
       allow list: if isAdmin();
-
-      // Self-registration can create only a minimal USER record.
-      // Expiry must be a Firestore Timestamp and cannot exceed 7 days
-      // from the server request time. Admin records must be provisioned
-      // separately by a trusted administrator.
       allow create: if isSignedIn()
         && isOwner(email)
         && request.resource.data.keys().hasAll(['email', 'role', 'expiresAt'])
@@ -42,20 +26,17 @@ service cloud.firestore {
         && request.resource.data.email.lower() == email.lower()
         && request.resource.data.role == 'user'
         && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt <= request.time + duration.value(7, 'd');
-
-      // Only the administrator can change roles or expiry dates.
-      // Keep the email identity immutable and the document schema bounded.
       allow update: if isAdmin()
         && request.resource.data.keys().hasAll(['email', 'role', 'expiresAt'])
         && request.resource.data.keys().hasOnly(['email', 'role', 'expiresAt'])
         && request.resource.data.email == resource.data.email
         && request.resource.data.role in ['user', 'admin']
-        && request.resource.data.expiresAt is timestamp;
-
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time;
       allow delete: if isAdmin();
     }
-
     match /watchlists/{uid} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
