@@ -101,3 +101,11 @@ Important assumption: the provider's period='quarter' cash-flow rows are treated
 - CI also runs the Quant Screener against checked-in data and the Firestore Rules Emulator authorization suite.
 - The current branch's CI result must be checked after the latest commits; adding a test workflow is not evidence that the tests passed.
 - Production Firebase rules, secrets, deployed Authentication state, and provider credentials were not accessible through this repository review and have not been changed.
+
+
+## Phase 7: consolidate the legacy login entry point
+
+- Found that root `login.html` was a stale second copy of the app, configured for the unrelated Firebase project `hoc-tieng-trung-64b8d`.
+- The legacy page also used a different account collection on registration and continued loading app data when Firestore authorization failed.
+- Replaced the duplicate page with a redirect to the canonical `index.html`, preserving query parameters and fragments.
+- This removes the conflicting client-side entry point from the maintenance branch; it does not modify live Firebase settings or account records.
