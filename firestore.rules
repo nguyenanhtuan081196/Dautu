@@ -34,8 +34,10 @@ service cloud.firestore {
         && request.resource.data.email == resource.data.email
         && request.resource.data.role in ['user', 'admin']
         && request.resource.data.expiresAt is timestamp
-        && request.resource.data.expiresAt > request.time;
-      allow delete: if isAdmin();
+;
+      // Client-side account deletion is intentionally disabled. Admins revoke access
+      // by setting expiresAt to a past timestamp; this prevents self-recreation.
+      allow delete: if false;
     }
     match /watchlists/{uid} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
