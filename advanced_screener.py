@@ -2,6 +2,7 @@ import os
 import json
 import pandas as pd
 import numpy as np
+import math
 
 DATA_FILE = "data.json"
 OUTPUT_JSON = "screener_results.json"
@@ -42,6 +43,14 @@ def get_sector(symbol):
             return sector
     return "CHUA_PHAN_LOAI"
 
+def _optional_finite_number(value):
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def evaluate_stock(symbol, data):
     sector = get_sector(symbol)
     pe = data.get("pe", 0)
@@ -53,11 +62,13 @@ def evaluate_stock(symbol, data):
     close_price = data.get("close", 0)
     
     # Các chỉ số nâng cao lấy từ data.json (đồng bộ với bctc_data đã tối ưu)
-    cfo_latest = data.get("cfo_latest")
-    cfo_ttm = data.get("cfo_ttm")
-    net_profit_ttm = data.get("net_profit_ttm")
-    liabilities_to_equity = data.get("liabilities_to_equity", data.get("debt_to_equity"))
-    gross_margin = data.get("gross_margin", 0)
+    cfo_latest = _optional_finite_number(data.get("cfo_latest"))
+    cfo_ttm = _optional_finite_number(data.get("cfo_ttm"))
+    net_profit_ttm = _optional_finite_number(data.get("net_profit_ttm"))
+    liabilities_to_equity = _optional_finite_number(
+        data.get("liabilities_to_equity", data.get("debt_to_equity"))
+    )
+    gross_margin = _optional_finite_number(data.get("gross_margin"))
 
     bctc_history = data.get("bctc_history", [])
     if not bctc_history:
