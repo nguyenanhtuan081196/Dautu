@@ -35,8 +35,13 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: dautu-data-main
+  cancel-in-progress: false
+
 jobs:
   ai-analysis:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -73,6 +78,8 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
+          git fetch origin main
+          git rebase origin/main
           git add data.json
           if git diff --quiet && git diff --staged --quiet; then
             echo "Không có thay đổi để commit."
