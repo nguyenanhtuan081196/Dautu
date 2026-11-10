@@ -1,9 +1,15 @@
 import unittest
 
-from advanced_screener import evaluate_stock
+from advanced_screener import evaluate_stock, get_sector
 
 
 class ScreenerCashConversionTests(unittest.TestCase):
+    def test_unmapped_symbols_are_not_misclassified_as_defensive_sector(self):
+        self.assertEqual(get_sector("UNKNOWN"), "CHUA_PHAN_LOAI")
+
+    def test_duplicate_sector_symbol_is_resolved_to_one_intended_group(self):
+        self.assertEqual(get_sector("PHR"), "NGUYEN_VAT_LIEU_CHU_KY")
+
     def _stock(self, **overrides):
         data = {
             "pe": 10,
