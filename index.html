@@ -563,7 +563,8 @@
                         userData = {
                             email: user.email,
                             role: 'user',
-                            expiresAt: expireDate.toISOString()
+                            // Firestore Rules require expiresAt to be a Timestamp.
+                            expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                         };
                         await userDocRef.set(userData);
                     } else {
@@ -657,18 +658,32 @@
             const errBox = document.getElementById('register-error');
             errBox.classList.add('hidden');
 
+            let createdUser = null;
             try {
-                const cred = await auth.createUserWithEmailAndPassword(email, pass);
+                const credential = await auth.createUserWithEmailAndPassword(email, pass);
+                createdUser = credential.user;
                 const expireDate = new Date();
                 expireDate.setDate(expireDate.getDate() + 7);
-                await db.collection('allowed_users').doc(email.toLowerCase()).set({
-                    email: email,
+                await db.collection('allowed_users').doc(email.trim().toLowerCase()).set({
+                    email: createdUser.email || email.trim(),
                     role: 'user',
-                    expiresAt: expireDate.toISOString()
+                    // Keep this type aligned with firestore.rules and admin expiry updates.
+                    expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
                 alert("Đăng ký thành công tài khoản trải nghiệm 7 ngày!");
             } catch (err) {
-                errBox.innerText = "Lỗi đăng ký: " + err.message;
+                // If Authentication succeeded but the Firestore profile failed, sign out.
+                // A later login will retry profile provisioning in onAuthStateChanged.
+                if (createdUser) {
+                    try {
+                        await auth.signOut();
+                    } catch (signOutError) {
+                        console.error("Không thể đăng xuất sau lỗi tạo hồ sơ:", signOutError);
+                    }
+                    errBox.innerText = "Tài khoản đăng nhập đã được tạo nhưng chưa lưu được hồ sơ Firestore. Anh hãy thử đăng nhập lại để hệ thống tạo hồ sơ tự động. Chi tiết: " + err.message;
+                } else {
+                    errBox.innerText = "Lỗi đăng ký: " + err.message;
+                }
                 errBox.classList.remove('hidden');
             }
         }

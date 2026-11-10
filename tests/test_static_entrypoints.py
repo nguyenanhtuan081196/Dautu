@@ -24,6 +24,18 @@ class StaticEntryPointTests(unittest.TestCase):
         self.assertNotIn("docRef.delete()", app)
         self.assertNotIn("function deleteUser(email)", app)
 
+    def test_new_user_profiles_use_firestore_timestamps(self):
+        app = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)", app)
+        self.assertEqual(
+            app.count("expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)"),
+            2,
+        )
+        self.assertNotIn("expiresAt: expireDate.toISOString()", app)
+        self.assertIn("await userDocRef.set(userData)", app)
+        self.assertIn("createdUser = credential.user", app)
+        self.assertIn("A later login will retry profile provisioning", app)
+
 
 if __name__ == "__main__":
     unittest.main()
