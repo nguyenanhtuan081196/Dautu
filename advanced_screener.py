@@ -53,9 +53,10 @@ def evaluate_stock(symbol, data):
     close_price = data.get("close", 0)
     
     # Các chỉ số nâng cao lấy từ data.json (đồng bộ với bctc_data đã tối ưu)
-    cfo_latest = data.get("cfo_latest", 0)
-    net_profit_ttm = data.get("net_profit_ttm", 0)
-    debt_to_equity = data.get("debt_to_equity", 0)
+    cfo_latest = data.get("cfo_latest")
+    cfo_ttm = data.get("cfo_ttm")
+    net_profit_ttm = data.get("net_profit_ttm")
+    liabilities_to_equity = data.get("liabilities_to_equity", data.get("debt_to_equity"))
     gross_margin = data.get("gross_margin", 0)
 
     bctc_history = data.get("bctc_history", [])
@@ -234,7 +235,9 @@ def evaluate_stock(symbol, data):
         "dividend_yield": dividend_yield,
         "profit_growth_yoy": profit_growth_yoy,
         "cfo_latest": cfo_latest,
-        "debt_to_equity": debt_to_equity,
+        "debt_to_equity": liabilities_to_equity,
+        "liabilities_to_equity": liabilities_to_equity,
+        "cfo_ttm": cfo_ttm,
         "gross_margin": gross_margin,
         "fundamental_score": fundamental_score,
         "technical_score": technical_score,
