@@ -64,6 +64,17 @@ def migrate(apply: bool = False) -> dict[str, int]:
     for symbol, payload in stock_data.items():
         if isinstance(payload, dict):
             upsert_stock(db, symbol, payload)
+            ai_fields = (
+                "bctc", "catalyst", "risks", "outlook", "ai_recommendation",
+                "ai_price_zone", "macro_view", "ai_updated_at",
+            )
+            ai_payload = {key: payload[key] for key in ai_fields if key in payload}
+            if ai_payload:
+                db.ai_analyses.replace_one(
+                    {"_id": symbol.upper()},
+                    {"_id": symbol.upper(), "symbol": symbol.upper(), **ai_payload},
+                    upsert=True,
+                )
 
     for path in history_files:
         symbol = path.stem.upper()
@@ -87,6 +98,24 @@ def migrate(apply: bool = False) -> dict[str, int]:
 
     if last_update_data:
         set_metadata(db, "last_update", last_update_data)
+    version_id = "legacy-json-import"
+    db.dataset_versions.update_one(
+        {"_id": version_id},
+        {
+            "$set": {
+                "version_id": version_id,
+                "source": "legacy_json",
+                "status": "completed",
+                "stocks": counts["stocks"],
+                "history_bars": counts["history_bars"],
+                "financial_report_types": counts["financial_report_types"],
+                "screener_results": counts["screener_results"],
+                "simulations": counts["simulations"],
+            }
+        },
+        upsert=True,
+    )
+    set_metadata(db, "active_dataset_version", version_id)
     set_metadata(db, "migration_source", "legacy_json")
     set_metadata(db, "migration_status", "completed")
     return counts
