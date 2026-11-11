@@ -1,7 +1,6 @@
 ﻿import os
 import datetime
 import time
-import json
 import argparse
 from app.database.job_io import database, load_stocks, load_history, load_financial_reports, save_stock, save_last_update
 from app.database.repositories import upsert_history
@@ -9,12 +8,6 @@ import numpy as np
 from financial_metrics import extract_advanced_metrics_from_bctc
 import requests
 from vnstock import Quote
-
-DATA_FILE = "data.json"
-LAST_UPDATE_FILE = "last_update.json"
-HISTORY_DIR = "history"
-BCTC_DIR = "bctc_data"
-JS_LIB_FILE = "lightweight-charts.js"
 
 VN100_SYMBOLS = [
     "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
