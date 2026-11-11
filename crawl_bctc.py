@@ -1,13 +1,12 @@
 ﻿import os
 import json
 import time
-import subprocess
 import datetime
+import argparse
+from app.database.job_io import database, save_last_update
+from app.database.repositories import upsert_financial_reports
 from vnstock import Fundamental
 
-OUTPUT_DIR = "bctc_data"
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
 
 # Danh sách chuẩn VN100
 VN100_SYMBOLS = [
@@ -25,13 +24,8 @@ VN100_SYMBOLS = [
 
 VN100_SYMBOLS = sorted(list(set(VN100_SYMBOLS)))
 
-def fetch_financial_reports(symbol):
+def fetch_financial_reports(symbol, db=None):
     try:
-        file_path = os.path.join(OUTPUT_DIR, f"{symbol.lower()}.json")
-        
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
         fun = Fundamental()
         stock_obj = fun.equity(symbol)
         
@@ -61,81 +55,35 @@ def fetch_financial_reports(symbol):
 
         reports['updated_at'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(reports, f, ensure_ascii=False, indent=4)
-        
-        print(f"✅ Đã tải và làm mới BCTC đầy đủ (kèm Cash Flow) cho mã: {symbol} -> {symbol.lower()}.json")
+        if db is None:
+            db = database()
+        upsert_financial_reports(db, symbol, reports)
+        print(f"✅ Đã ghi BCTC trực tiếp MongoDB cho mã: {symbol}")
         return True
         
     except Exception as e:
         print(f"❌ Lỗi mã {symbol}: {e}")
         return False
 
-def auto_git_push_bctc(target_symbols):
-    try:
-        print("\n📤 Đang tự động đồng bộ thư mục 'bctc_data' lên GitHub...")
-        subprocess.run(["git", "add", "bctc_data/"], check=True)
-        
-        commit_msg = f"Auto update full BCTC data (with Cash Flow) - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        
-        # Thử commit, nếu không có gì thay đổi thì bỏ qua
-        try:
-            subprocess.run(["git", "commit", "-m", commit_msg], check=True, capture_output=True)
-        except subprocess.CalledProcessError:
-            print("ℹ️ Không có thay đổi mới để commit.")
-            return
-
-        # THÊM LỆNH PULL REBASE ĐỂ TRÁNH LỖI REJECTED
-        print("🔄 Đang đồng bộ với GitHub (pull --rebase)...")
-        subprocess.run(["git", "pull", "--rebase", "origin", "main"], check=True)
-        
-        # Đẩy lên GitHub
-        subprocess.run(["git", "push"], check=True)
-        print("🚀 Đẩy dữ liệu BCTC lên GitHub thành công!")
-        
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Lỗi khi đẩy lên GitHub: {e}")
-        print("👉 Gợi ý: Anh thử chạy lệnh 'git pull origin main --rebase' thủ công để kiểm tra xung đột.")
-    except Exception as e:
-        print(f"ℹ️ Git push info: {e}")
-
-
 def main():
-    print("==================================================")
-    print("   CÀO ĐẦY ĐỦ BÁO CÁO TÀI CHÍNH (KÈM LƯU CHUYỂN TIỀN TỆ)")
-    print("==================================================")
-    print("1. Cào TOÀN BỘ danh sách VN100")
-    print("2. Cào MỘT NHÓM MÃ hoặc MÃ LẺ (Tùy chọn)")
-    
-    mode_choice = input("Nhập lựa chọn của bạn (1/2, mặc định 2): ").strip()
-    
-    target_symbols = []
-    if mode_choice == '1':
-        target_symbols = VN100_SYMBOLS
-        print("-> Đã chọn chế độ cào toàn bộ danh sách VN100.")
-    else:
-        raw_input_symbols = input("Nhập mã cần cào (cách nhau bởi dấu phẩy, VD: FPT,MWG,HPG): ").strip()
-        if raw_input_symbols:
-            target_symbols = [s.strip().upper() for s in raw_input_symbols.split(",") if s.strip()]
-            print(f"-> Đã chọn cào các mã: {target_symbols}")
-        else:
-            target_symbols = ["FPT"]
-            print("⚠️ Không nhận được mã hợp lệ, mặc định cào mã: FPT")
-
-    total = len(target_symbols)
-    print(f"\n🚀 Bắt đầu lấy dữ liệu BCTC qua vnstock v5 cho {total} mã...")
-    
-    successful_symbols = []
-    for i, symbol in enumerate(target_symbols):
-        print(f"[{i+1}/{total}] Xử lý: {symbol}...")
-        if fetch_financial_reports(symbol):
-            successful_symbols.append(symbol)
-        time.sleep(0.4)
-        
-    print(f"\n🎉 Hoàn tất! Đã làm mới thành công {len(successful_symbols)}/{total} file BCTC.")
-    
-    if successful_symbols:
-        auto_git_push_bctc(successful_symbols)
+    parser = argparse.ArgumentParser(description="Crawl quarterly financial reports into MongoDB Atlas")
+    parser.add_argument("--symbols", default=os.getenv("INPUT_SYMBOLS", "FPT"), help="Comma-separated symbols")
+    parser.add_argument("--all-vn100", action="store_true", help="Crawl the full VN100 universe")
+    parser.add_argument("--sleep", type=float, default=0.4)
+    args = parser.parse_args()
+    target_symbols = VN100_SYMBOLS if args.all_vn100 else [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    if not target_symbols:
+        parser.error("Provide --symbols or --all-vn100")
+    db = database()
+    successful = []
+    for index, symbol in enumerate(target_symbols, 1):
+        print(f"[{index}/{len(target_symbols)}] Crawling BCTC: {symbol}")
+        if fetch_financial_reports(symbol, db):
+            successful.append(symbol)
+        time.sleep(args.sleep)
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    save_last_update(db, {"bctc_updated_at": timestamp, "successful_symbols": successful})
+    print(f"Completed BCTC: {len(successful)}/{len(target_symbols)} symbols saved to MongoDB.")
 
 if __name__ == "__main__":
     main()
