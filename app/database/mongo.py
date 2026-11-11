@@ -40,7 +40,8 @@ def ping_database() -> bool:
 
 def ensure_indexes(db: Database | None = None) -> None:
     """Create idempotent indexes. Safe to call at API/pipeline startup."""
-    db = db or get_database()
+    if db is None:
+        db = get_database()
     db.stocks.create_index([("symbol", ASCENDING)], unique=True)
     db.price_history.create_index(
         [("symbol", ASCENDING), ("interval", ASCENDING), ("time", ASCENDING)],
