@@ -21,7 +21,8 @@ def database():
 
 
 def load_stocks(db=None) -> dict[str, dict[str, Any]]:
-    db = db or database()
+    if db is None:
+        db = database()
     return {doc["symbol"]: {k: v for k, v in doc.items() if k != "_id"}
             for doc in db.stocks.find({})}
 
