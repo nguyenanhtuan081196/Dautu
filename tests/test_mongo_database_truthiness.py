@@ -24,4 +24,4 @@ def test_ensure_indexes_accepts_database_without_truth_testing():
 
 
 def test_load_stocks_accepts_database_without_truth_testing():
-    assert job_io.load_stocks(_Database()) == []
+    assert job_io.load_stocks(_Database()) == {}
