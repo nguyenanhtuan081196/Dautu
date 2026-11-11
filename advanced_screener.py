@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import math
 
-OUTPUT_JSON = "screener_results.json"
 OUTPUT_CSV = "screener_summary.csv"
 
 # Phân nhóm ngành chuẩn chi tiết cho VN100 (7 Nhóm ngành)
@@ -60,7 +59,7 @@ def evaluate_stock(symbol, data):
     recommendation = data.get("recommendation", "")
     close_price = data.get("close", 0)
     
-    # Các chỉ số nâng cao lấy từ data.json (đồng bộ với bctc_data đã tối ưu)
+    # Các chỉ số nâng cao lấy từ MongoDB stocks (đồng bộ với financial_reports)
     cfo_latest = _optional_finite_number(data.get("cfo_latest"))
     cfo_ttm = _optional_finite_number(data.get("cfo_ttm"))
     net_profit_ttm = _optional_finite_number(data.get("net_profit_ttm"))
