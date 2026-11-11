@@ -1,4 +1,6 @@
 import os
+import argparse
+import json
 from app.database.job_io import database, load_stocks, save_screener
 import pandas as pd
 import numpy as np
@@ -263,12 +265,20 @@ def evaluate_stock(symbol, data):
     }
 
 def main():
+    parser = argparse.ArgumentParser(description="Quant Screener backed by MongoDB Atlas")
+    parser.add_argument("--smoke-test-json", action="store_true", help="Read legacy repository data for CI smoke testing only; do not connect to MongoDB or write results")
+    args = parser.parse_args()
     print("🚀 Chạy bộ lọc định lượng đa tiêu chí - Đồng bộ hoàn chỉnh với BCTC chuẩn...")
-    
-    db = database()
-    stock_db = load_stocks(db)
+
+    db = None
+    if args.smoke_test_json:
+        with open("data.json", "r", encoding="utf-8") as handle:
+            stock_db = json.load(handle)
+    else:
+        db = database()
+        stock_db = load_stocks(db)
     if not stock_db:
-        print("⚠️ MongoDB stocks collection is empty; import legacy data before running screener.")
+        print("⚠️ Không có dữ liệu stocks để chạy Screener.")
         return
 
     results = []
@@ -282,8 +292,11 @@ def main():
 
     results = sorted(results, key=lambda x: (x.get('fundamental_score', 0), x.get('roe', 0)), reverse=True)
 
-    save_screener(db, results)
-    print(f"✅ Đã ghi {len(results)} kết quả Screener vào MongoDB.")
+    if db is not None:
+        save_screener(db, results)
+        print(f"✅ Đã ghi {len(results)} kết quả Screener vào MongoDB.")
+    else:
+        print(f"✅ CI smoke test: tính được {len(results)} kết quả; không ghi dữ liệu.")
 
     df = pd.DataFrame(results)
     # CSV remains an optional local diagnostic artifact; MongoDB is the source of truth.
