@@ -36,6 +36,41 @@ Set these as Render secrets/environment variables. Never commit their values.
 
 The existing browser Firebase config (`FIREBASE_CONFIG`) is public client configuration and is not a substitute for the Firebase Admin service account.
 
+## MongoDB-backed data jobs
+
+The following jobs now use Atlas as their operational read/write store and no longer
+perform interactive prompts or Git operations:
+
+| Job | MongoDB input | MongoDB output |
+|---|---|---|
+| `fetch_data_local.py` | Existing `stocks`, D1 history, and BCTC reports | `stocks`, `price_history`, `app_metadata` |
+| `crawl_bctc.py` | None (provider crawl) | `financial_reports`, `app_metadata` |
+| `advanced_screener.py` | `stocks` | `screener_results` |
+| `analyze_ai.py` | `stocks`, `screener_results` | `ai_analyses` and AI fields on `stocks` |
+| `simulator.py` | D1 bars from `price_history` | `simulations` |
+
+Run from the repository root with `MONGODB_URI` and `MONGODB_DATABASE` configured:
+
+```bash
+# Quarterly financial reports
+python crawl_bctc.py --all-vn100
+
+# Price data (default: VN100, 30 latest sessions)
+python fetch_data_local.py --sessions 30
+python fetch_data_local.py --symbols FPT,MWG --sessions 2500
+
+# Sequential analysis stages
+python advanced_screener.py
+python analyze_ai.py --mode all --force
+python simulator.py
+```
+
+The price and BCTC crawlers accept CLI arguments/environment defaults and are suitable
+for non-interactive Render jobs. Set `ALIBABA_API_KEY` for AI analysis.
+Legacy JSON files are no longer written by these jobs. Existing JSON snapshots remain
+available for rollback and for the one-time migration importer; do not remove them until
+Atlas counts and representative symbols have been checked.
+
 ## API
 
 - `GET /healthz`: database connectivity health check; no user data.

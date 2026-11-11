@@ -1,18 +1,13 @@
 ﻿import os
 import datetime
 import time
-import json
-import subprocess
+import argparse
+from app.database.job_io import database, load_stocks, load_history, load_financial_reports, save_stock, save_last_update
+from app.database.repositories import upsert_history
 import numpy as np
 from financial_metrics import extract_advanced_metrics_from_bctc
 import requests
 from vnstock import Quote
-
-DATA_FILE = "data.json"
-LAST_UPDATE_FILE = "last_update.json"
-HISTORY_DIR = "history"
-BCTC_DIR = "bctc_data"
-JS_LIB_FILE = "lightweight-charts.js"
 
 VN100_SYMBOLS = [
     "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
@@ -253,16 +248,13 @@ def fetch_history_with_fallback(symbol, start_date, end_date):
     return None
 
 
-def parse_bctc_history(symbol):
-    filepath = os.path.join(BCTC_DIR, f"{symbol}.json")
-    if not os.path.exists(filepath):
-        return []
-
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return []
+def parse_bctc_history(symbol, reports=None):
+    if reports is None:
+        try:
+            reports = load_financial_reports(database(), symbol)
+        except Exception:
+            return []
+    data = reports or {}
 
     balance_sheet = data.get("balance_sheet", [])
     income_statement = data.get("income_statement", [])
@@ -341,98 +333,19 @@ def parse_bctc_history(symbol):
     return bctc_records
 
 
-def auto_git_push():
-    try:
-        print("\n🔄 Đang tự động đồng bộ dữ liệu lên GitHub...")
-        
-        subprocess.run(["git", "fetch", "origin", "main"], check=True)
-        
-        pull_result = subprocess.run(["git", "pull", "origin", "main", "--rebase"], capture_output=True, text=True)
-        if pull_result.returncode != 0:
-            print("⚠️ Phát hiện xung đột, đang xử lý ưu tiên file data.json trên PC...")
-            subprocess.run(["git", "rebase", "--abort"], check=False)
-            subprocess.run(["git", "checkout", "--ours", DATA_FILE], check=False)
-            subprocess.run(["git", "add", DATA_FILE], check=False)
-
-        subprocess.run(["git", "add", DATA_FILE], check=True)
-        subprocess.run(["git", "add", LAST_UPDATE_FILE], check=True)
-        subprocess.run(["git", "add", HISTORY_DIR], check=True)
-        if os.path.exists(BCTC_DIR):
-            subprocess.run(["git", "add", BCTC_DIR], check=True)
-        if os.path.exists(JS_LIB_FILE):
-            subprocess.run(["git", "add", JS_LIB_FILE], check=True)
-
-        status_result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-        if not status_result.stdout.strip():
-            print("ℹ️ Không có dữ liệu thay đổi nào mới để đẩy lên.")
-            return
-
-        commit_msg = f"Auto update symbols data & last_update timestamp - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        subprocess.run(["git", "commit", "-m", commit_msg], check=True)
-        subprocess.run(["git", "push", "origin", "main", "--force-with-lease"], check=True)
-        print("🚀 Đẩy dữ liệu lên GitHub thành công!")
-        
-    except subprocess.CalledProcessError as e:
-        print(f"⚠️ Lỗi Git automation: {e}")
-    except Exception as e:
-        print(f"⚠️ Lỗi không xác định khi Git push: {e}")
-
-
 def main():
-    print("==================================================")
-    print("        BƯỚC 1: CHỌN PHẠM VI MÃ CỔ PHIẾU        ")
-    print("==================================================")
-    print("1. Cào TOÀN BỘ danh sách VN100 (Mặc định)")
-    print("2. Cào RIÊNG TỪNG MÃ (Tùy chọn mã cụ thể)")
-
-    target_symbols = VN100_SYMBOLS
-    mode_choice = input("Nhập lựa chọn chế độ (1/2, mặc định 1): ").strip()
-    if mode_choice == '2':
-        raw_input_symbols = input("Nhập mã cổ phiếu muốn cào (cách nhau bởi dấu phẩy, VD: FPT,MWG,ACB): ").strip()
-        if raw_input_symbols:
-            target_symbols = [s.strip().upper() for s in raw_input_symbols.split(",") if s.strip()]
-            print(f"-> Đã chọn cào riêng các mã: {target_symbols}")
-        else:
-            print("⚠️ Không nhận được mã hợp lệ, tự động quay về cào toàn bộ VN100.")
-    else:
-        print("-> Đã chọn: Cào toàn bộ danh sách VN100.")
-
-    print("\n==================================================")
-    print("        BƯỚC 2: CHỌN SỐ PHIÊN GIAO DỊCH         ")
-    print("==================================================")
-    print("1. Gần nhất: 30 phiên giao dịch gần nhất (Mặc định)")
-    print("2. Dài hạn: 10 năm gần đây (~2500 phiên)")
-    print("3. Tùy chỉnh: Nhập số phiên tự do (VD: 2, 5, 100 phiên)")
-
-    choice = input("Nhập lựa chọn số phiên (1/2/3, mặc định 1): ").strip()
-
-    num_sessions = 30
-    if choice == '2':
-        num_sessions = 2500
-        print("-> Đã chọn chế độ cào 10 năm dữ liệu (~2500 phiên).")
-    elif choice == '3':
-        try:
-            custom_sessions = int(input("Nhập số phiên muốn cào (ví dụ: 2, 5, 100): ").strip())
-            if custom_sessions > 0:
-                num_sessions = custom_sessions
-                print(f"-> Đã chọn cào tùy chỉnh: {num_sessions} phiên.")
-        except ValueError:
-            print("⚠️ Nhập sai định dạng, tự động quay về mặc định 30 phiên.")
-    else:
-        print("-> Đã chọn chế độ mặc định (30 phiên gần nhất).")
-
+    parser = argparse.ArgumentParser(description="Fetch prices and update MongoDB Atlas")
+    parser.add_argument("--symbols", default=os.getenv("INPUT_SYMBOLS", ",".join(VN100_SYMBOLS)), help="Comma-separated symbols")
+    parser.add_argument("--sessions", type=int, default=int(os.getenv("PRICE_SESSIONS", "30")), help="Number of daily sessions")
+    args = parser.parse_args()
+    target_symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    num_sessions = max(1, args.sessions)
+    if not target_symbols:
+        parser.error("At least one symbol is required")
+    db = database()
     print(f"\n🚀 Bắt đầu cào dữ liệu cho {len(target_symbols)} mã (Lấy đúng {num_sessions} phiên giao dịch gần nhất)...")
 
-    if not os.path.exists(HISTORY_DIR):
-        os.makedirs(HISTORY_DIR)
-
-    stock_db = {}
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                stock_db = json.load(f)
-        except Exception:
-            pass
+    stock_db = load_stocks(db)
 
     total = len(target_symbols)
     end_date = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -469,17 +382,7 @@ def main():
                         "volume": int(row.get('volume', 0))
                     })
 
-                history_file_path = os.path.join(HISTORY_DIR, f"{symbol}.json")
-                existing_history_d1 = []
-
-                if os.path.exists(history_file_path):
-                    try:
-                        with open(history_file_path, "r", encoding="utf-8") as sf:
-                            old_history_data = json.load(sf)
-                            existing_history_d1 = old_history_data.get("history_d1", [])
-                    except Exception:
-                        pass
-
+                existing_history_d1 = load_history(db, symbol, "D1")
                 merged_dict = {item['time']: item for item in existing_history_d1}
                 for item in new_history_d1:
                     merged_dict[item['time']] = item
@@ -530,11 +433,11 @@ def main():
             "history_w1": history_w1,
             "history_mn": history_mn
         }
-        with open(os.path.join(HISTORY_DIR, f"{symbol}.json"), "w", encoding="utf-8") as sf:
-            json.dump(symbol_history_data, sf, ensure_ascii=False)
+        upsert_history(db, symbol, symbol_history_data)
 
-        bctc_history = parse_bctc_history(symbol)
-        adv_metrics = extract_advanced_metrics_from_bctc(symbol)
+        reports = load_financial_reports(db, symbol)
+        bctc_history = parse_bctc_history(symbol, reports)
+        adv_metrics = extract_advanced_metrics_from_bctc(symbol, reports=reports)
         old_data = stock_db.get(symbol, {})
 
         current_time_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -565,20 +468,12 @@ def main():
         }
 
         stock_db[symbol] = {**old_data, **crawled_data}
-
+        save_stock(db, symbol, stock_db[symbol])
         time.sleep(1.5)
 
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(stock_db, f, ensure_ascii=False, indent=4)
-
     crawl_timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    with open(LAST_UPDATE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"last_update": crawl_timestamp}, f, ensure_ascii=False)
-
-    print(f"✅ Đã lưu file {LAST_UPDATE_FILE} với mốc thời gian: {crawl_timestamp}")
-
-    # 🚀 TỰ ĐỘNG ĐẨY LÊN GITHUB SAU KHI CÀO XONG
-    auto_git_push()
+    save_last_update(db, {"last_update": crawl_timestamp})
+    print(f"✅ Đã ghi dữ liệu giá và metadata trực tiếp vào MongoDB: {crawl_timestamp}")
 
 
 if __name__ == "__main__":

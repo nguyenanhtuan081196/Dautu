@@ -4,7 +4,7 @@ import math
 import os
 
 
-def extract_advanced_metrics_from_bctc(symbol, bctc_dir="bctc_data"):
+def extract_advanced_metrics_from_bctc(symbol, bctc_dir="bctc_data", reports=None):
     """Extract comparable latest-quarter and TTM fundamentals from raw quarterly statements.
 
     Cash-flow and income-statement figures are compared only when four consecutive
@@ -18,15 +18,17 @@ def extract_advanced_metrics_from_bctc(symbol, bctc_dir="bctc_data"):
         "gross_margin": None,
         "net_profit_ttm": None,
     }
-    filepath = os.path.join(bctc_dir, f"{symbol}.json")
-    if not os.path.exists(filepath):
-        return empty.copy()
-
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError, TypeError):
-        return empty.copy()
+    if reports is None:
+        filepath = os.path.join(bctc_dir, f"{symbol}.json")
+        if not os.path.exists(filepath):
+            return empty.copy()
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError, TypeError):
+            return empty.copy()
+    else:
+        data = reports
 
     balance_sheet = data.get("balance_sheet") or []
     cash_flow = data.get("cash_flow") or []

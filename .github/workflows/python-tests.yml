@@ -26,7 +26,7 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
       - name: Run Quant Screener smoke test against repository data
-        run: python advanced_screener.py
+        run: python advanced_screener.py --smoke-test-json
 
   firestore-rules-tests:
     runs-on: ubuntu-latest

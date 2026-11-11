@@ -1,11 +1,11 @@
 import os
+import argparse
 import json
+from app.database.job_io import database, load_stocks, save_screener
 import pandas as pd
 import numpy as np
 import math
 
-DATA_FILE = "data.json"
-OUTPUT_JSON = "screener_results.json"
 OUTPUT_CSV = "screener_summary.csv"
 
 # Phân nhóm ngành chuẩn chi tiết cho VN100 (7 Nhóm ngành)
@@ -61,7 +61,7 @@ def evaluate_stock(symbol, data):
     recommendation = data.get("recommendation", "")
     close_price = data.get("close", 0)
     
-    # Các chỉ số nâng cao lấy từ data.json (đồng bộ với bctc_data đã tối ưu)
+    # Các chỉ số nâng cao lấy từ MongoDB stocks (đồng bộ với financial_reports)
     cfo_latest = _optional_finite_number(data.get("cfo_latest"))
     cfo_ttm = _optional_finite_number(data.get("cfo_ttm"))
     net_profit_ttm = _optional_finite_number(data.get("net_profit_ttm"))
@@ -265,14 +265,21 @@ def evaluate_stock(symbol, data):
     }
 
 def main():
+    parser = argparse.ArgumentParser(description="Quant Screener backed by MongoDB Atlas")
+    parser.add_argument("--smoke-test-json", action="store_true", help="Read legacy repository data for CI smoke testing only; do not connect to MongoDB or write results")
+    args = parser.parse_args()
     print("🚀 Chạy bộ lọc định lượng đa tiêu chí - Đồng bộ hoàn chỉnh với BCTC chuẩn...")
-    
-    if not os.path.exists(DATA_FILE):
-        print(f"⚠️ Không tìm thấy file {DATA_FILE}")
-        return
 
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        stock_db = json.load(f)
+    db = None
+    if args.smoke_test_json:
+        with open("data.json", "r", encoding="utf-8") as handle:
+            stock_db = json.load(handle)
+    else:
+        db = database()
+        stock_db = load_stocks(db)
+    if not stock_db:
+        print("⚠️ Không có dữ liệu stocks để chạy Screener.")
+        return
 
     results = []
     for symbol, data in stock_db.items():
@@ -285,10 +292,14 @@ def main():
 
     results = sorted(results, key=lambda x: (x.get('fundamental_score', 0), x.get('roe', 0)), reverse=True)
 
-    with open(OUTPUT_JSON, "w", encoding="utf-8") as jf:
-        json.dump(results, jf, ensure_ascii=False, indent=4, allow_nan=False)
-        
+    if db is not None:
+        save_screener(db, results)
+        print(f"✅ Đã ghi {len(results)} kết quả Screener vào MongoDB.")
+    else:
+        print(f"✅ CI smoke test: tính được {len(results)} kết quả; không ghi dữ liệu.")
+
     df = pd.DataFrame(results)
+    # CSV remains an optional local diagnostic artifact; MongoDB is the source of truth.
     df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")
 
     industry_groups = {}
