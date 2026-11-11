@@ -38,5 +38,5 @@ def test_simulator_calculates_from_supplied_mongodb_history():
     result = get_historical_return_rate_with_details("TEST", bars)
     assert result is not None
     assert result["annual_rate_percent"] > 0
-    assert result["start_quarter"].startswith("2020Q")
-    assert result["end_quarter"].startswith("2025Q")
+    assert result["start_quarter"].startswith("2021Q")
+    assert result["end_quarter"].startswith("2026Q")
