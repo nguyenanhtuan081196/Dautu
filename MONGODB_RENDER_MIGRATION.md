@@ -52,13 +52,12 @@ perform interactive prompts or Git operations:
 Run from the repository root with `MONGODB_URI` and `MONGODB_DATABASE` configured:
 
 ```bash
+# Quarterly financial reports
+python crawl_bctc.py --all-vn100
+
 # Price data (default: VN100, 30 latest sessions)
 python fetch_data_local.py --sessions 30
 python fetch_data_local.py --symbols FPT,MWG --sessions 2500
-
-# Quarterly financial reports
-python crawl_bctc.py --symbols FPT,MWG
-python crawl_bctc.py --all-vn100
 
 # Sequential analysis stages
 python advanced_screener.py
