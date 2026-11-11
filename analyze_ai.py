@@ -6,9 +6,6 @@ import json
 import argparse
 from app.database.job_io import database, load_stocks, load_screener, save_ai_analysis
 
-SCREENER_FILE = "screener_results.json"
-DATA_FILE = "data.json"
-
 ALIBABA_API_KEY = os.getenv("ALIBABA_API_KEY", "").strip()
 INPUT_SYMBOLS = os.getenv("INPUT_SYMBOLS", "").strip()
 API_URL = "https://ws-8lcqaxwxdv0h9xzy.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
