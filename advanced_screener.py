@@ -1,11 +1,9 @@
 import os
-import json
 from app.database.job_io import database, load_stocks, save_screener
 import pandas as pd
 import numpy as np
 import math
 
-DATA_FILE = "data.json"
 OUTPUT_JSON = "screener_results.json"
 OUTPUT_CSV = "screener_summary.csv"
 
