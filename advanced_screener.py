@@ -1,5 +1,6 @@
 import os
 import json
+from app.database.job_io import database, load_stocks, save_screener
 import pandas as pd
 import numpy as np
 import math
@@ -267,12 +268,11 @@ def evaluate_stock(symbol, data):
 def main():
     print("🚀 Chạy bộ lọc định lượng đa tiêu chí - Đồng bộ hoàn chỉnh với BCTC chuẩn...")
     
-    if not os.path.exists(DATA_FILE):
-        print(f"⚠️ Không tìm thấy file {DATA_FILE}")
+    db = database()
+    stock_db = load_stocks(db)
+    if not stock_db:
+        print("⚠️ MongoDB stocks collection is empty; import legacy data before running screener.")
         return
-
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        stock_db = json.load(f)
 
     results = []
     for symbol, data in stock_db.items():
@@ -285,10 +285,11 @@ def main():
 
     results = sorted(results, key=lambda x: (x.get('fundamental_score', 0), x.get('roe', 0)), reverse=True)
 
-    with open(OUTPUT_JSON, "w", encoding="utf-8") as jf:
-        json.dump(results, jf, ensure_ascii=False, indent=4, allow_nan=False)
-        
+    save_screener(db, results)
+    print(f"✅ Đã ghi {len(results)} kết quả Screener vào MongoDB.")
+
     df = pd.DataFrame(results)
+    # CSV remains an optional local diagnostic artifact; MongoDB is the source of truth.
     df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")
 
     industry_groups = {}
