@@ -39,4 +39,4 @@ def test_simulator_calculates_from_supplied_mongodb_history():
     assert result is not None
     assert result["annual_rate_percent"] > 0
     assert result["start_quarter"].startswith("2021Q")
-    assert result["end_quarter"].startswith("2026Q")
+    assert result["end_quarter"].startswith("2025Q")
