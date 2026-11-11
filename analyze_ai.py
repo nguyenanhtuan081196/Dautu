@@ -4,6 +4,7 @@ import requests
 import re
 import json
 import argparse
+from app.database.job_io import database, load_stocks, load_screener, save_ai_analysis
 
 SCREENER_FILE = "screener_results.json"
 DATA_FILE = "data.json"
@@ -233,12 +234,7 @@ def build_target_lists(screener_map):
     return top_symbols, remaining_symbols
 
 
-def save_db(stock_db):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(stock_db, f, ensure_ascii=False, indent=4)
-
-
-def run_group(symbols_dict, label, stock_db, screener_map, sleep_time):
+def run_group(symbols_dict, label, stock_db, screener_map, sleep_time, db):
     """Chạy AI cho một nhóm mã và ghi kết quả ngay sau mỗi mã."""
     if not symbols_dict:
         print(f"⚠️ Nhóm [{label}] rỗng, bỏ qua.")
@@ -280,7 +276,16 @@ def run_group(symbols_dict, label, stock_db, screener_map, sleep_time):
             print(f"  -> ❌ Lỗi AI")
 
         # Ghi ngay sau mỗi mã để tránh mất dữ liệu khi bị ngắt
-        save_db(stock_db)
+        save_ai_analysis(db, symbol, {
+            "bctc": stock_metrics.get("bctc", ""),
+            "catalyst": stock_metrics.get("catalyst", ""),
+            "risks": stock_metrics.get("risks", ""),
+            "outlook": stock_metrics.get("outlook", ""),
+            "ai_recommendation": stock_metrics.get("ai_recommendation", ""),
+            "ai_price_zone": stock_metrics.get("ai_price_zone", ""),
+            "macro_view": stock_metrics.get("macro_view", ""),
+            "ai_updated_at": stock_metrics.get("ai_updated_at", ""),
+        })
         time.sleep(sleep_time)
 
     return count
@@ -302,14 +307,11 @@ def main():
                         help="Thời gian nghỉ giữa các mã (giây). Mặc định 3.")
     args = parser.parse_args()
 
-    if not os.path.exists(SCREENER_FILE) or not os.path.exists(DATA_FILE):
-        print(f"❌ Không tìm thấy file dữ liệu đầu vào!")
-        return
-
-    with open(SCREENER_FILE, "r", encoding="utf-8") as f:
-        screener_data = json.load(f)
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        stock_db = json.load(f)
+    db = database()
+    screener_data = load_screener(db)
+    stock_db = load_stocks(db)
+    if not screener_data or not stock_db:
+        raise RuntimeError("MongoDB stocks/screener_results is empty. Run price crawler and Screener first.")
 
     screener_map = {item.get('symbol'): item for item in screener_data if item.get('close_price', 0) > 0}
 
@@ -318,7 +320,7 @@ def main():
         custom_list = [s.strip().upper() for s in INPUT_SYMBOLS.split(",") if s.strip()]
         print(f"🎯 INPUT_SYMBOLS: {custom_list}")
         custom_map = {s: get_sector(s) for s in custom_list if s in screener_map}
-        count = run_group(custom_map, "INPUT_SYMBOLS", stock_db, screener_map, args.sleep)
+        count = run_group(custom_map, "INPUT_SYMBOLS", stock_db, screener_map, args.sleep, db)
         print(f"\n🎉 Hoàn thành: {count} mã.")
         return
 
@@ -347,7 +349,7 @@ def main():
 
     if args.mode in ("top", "all"):
         if top_symbols:
-            total_count += run_group(top_symbols, "TOP", stock_db, screener_map, args.sleep)
+            total_count += run_group(top_symbols, "TOP", stock_db, screener_map, args.sleep, db)
         else:
             print("✅ Top đầu: đã phân tích gần đây, bỏ qua.")
 
@@ -370,11 +372,11 @@ def main():
                 print(f"\n📦 Batch {args.batch}/{total_batches} của phần CÒN LẠI: "
                       f"{len(batch_map)}/{total_rem} mã")
                 total_count += run_group(batch_map, f"REST-{args.batch}/{total_batches}",
-                                         stock_db, screener_map, args.sleep)
+                                         stock_db, screener_map, args.sleep, db)
         else:
             print("✅ Phần còn lại: đã phân tích gần đây, bỏ qua.")
 
-    print(f"\n🎉 Hoàn thành: cập nhật {total_count} mã vào {DATA_FILE}.")
+    print(f"\n🎉 Hoàn thành: cập nhật {total_count} mã phân tích AI vào MongoDB.")
 
 
 if __name__ == "__main__":
