@@ -157,6 +157,28 @@ class RequireUserTests(unittest.TestCase):
                 }
                 self.assertIn("require_user", dependency_names)
 
+    def test_simulation_routes_are_authenticated(self):
+        routes = [
+            route for route in main.app.routes
+            if getattr(route, "path", "").startswith("/api/simulations")
+        ]
+        self.assertEqual(
+            {route.path for route in routes},
+            {"/api/simulations", "/api/simulations/{symbol}"},
+        )
+        for route in routes:
+            dependency_names = {
+                getattr(dep.call, "__name__", None)
+                for dep in route.dependant.dependencies
+            }
+            self.assertIn("require_user", dependency_names)
+
+    def test_simulation_projection_is_allowlisted(self):
+        self.assertIn("annual_rate_percent", main.SIMULATION_RESPONSE_FIELDS)
+        self.assertIn("start_price_mean", main.SIMULATION_RESPONSE_FIELDS)
+        self.assertNotIn("provider_payload", main.SIMULATION_RESPONSE_FIELDS)
+        self.assertNotIn("run_id", main.SIMULATION_RESPONSE_FIELDS)
+
     def test_symbol_path_parameters_are_constrained(self):
         symbol_routes = [
             route for route in main.app.routes
