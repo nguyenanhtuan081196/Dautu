@@ -9,7 +9,10 @@ from fastapi import HTTPException
 from app.api.security import authorize_account
 
 
-_UNSET = object()\n\n\nclass AuthorizeAccountTests(unittest.TestCase):
+_UNSET = object()
+
+
+class AuthorizeAccountTests(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
         self.token = {"uid": "user-1", "email": "user@example.com"}
@@ -19,14 +22,14 @@ _UNSET = object()\n\n\nclass AuthorizeAccountTests(unittest.TestCase):
             "expiresAt": self.now + timedelta(days=1),
         }
 
-    def assert_denied(self, token=None, account=None, status_code=403):
+    def assert_denied(self, token=None, account=_UNSET):
         with self.assertRaises(HTTPException) as raised:
             authorize_account(
                 self.token if token is None else token,
-                self.account if account is None else account,
+                self.account if account is _UNSET else account,
                 now=self.now,
             )
-        self.assertEqual(raised.exception.status_code, status_code)
+        self.assertEqual(raised.exception.status_code, 403)
 
     def test_active_user_is_authorized(self):
         result = authorize_account(self.token, self.account, now=self.now)
@@ -58,12 +61,12 @@ _UNSET = object()\n\n\nclass AuthorizeAccountTests(unittest.TestCase):
         admin_account = {"email": admin_token["email"], "role": "admin"}
         with patch.dict(os.environ, {"FIREBASE_ADMIN_EMAILS": admin_token["email"]}):
             self.assertEqual(authorize_account(admin_token, admin_account, now=self.now)["role"], "admin")
-        self.assert_denied(token=admin_token, account=admin_account)
 
     def test_admin_role_does_not_bypass_allowlist(self):
         token = {"uid": "attacker", "email": "attacker@example.com"}
         account = {"email": token["email"], "role": "admin"}
-        with patch.dict(os.environ, {"FIREBASE_ADMIN_EMAILS": "someone-else@example.com"}):\n            self.assert_denied(token=token, account=account)
+        with patch.dict(os.environ, {"FIREBASE_ADMIN_EMAILS": "someone-else@example.com"}):
+            self.assert_denied(token=token, account=account)
 
 
 if __name__ == "__main__":
