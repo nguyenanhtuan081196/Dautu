@@ -52,7 +52,7 @@ jobs:
               )
           os.makedirs("site", exist_ok=True)
           with open("site/api-config.js", "w", encoding="utf-8") as handle:
-              handle.write("window.DAUTU_API_BASE_URL = " + json.dumps(api_url) + ";\\n")
+              handle.write("window.DAUTU_API_BASE_URL = " + json.dumps(api_url) + ";\n")
           PY
           cp index.html login.html lightweight-charts.js CNAME site/
           touch site/.nojekyll
