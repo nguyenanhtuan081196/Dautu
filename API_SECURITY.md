@@ -22,7 +22,7 @@ The FastAPI service is designed to sit behind Render's public web-service load b
 
 ## Rate limiting
 
-- Successfully authenticated users are limited to 120 API requests per 60-second fixed window.
+- Email-verified Firebase identities are limited to 120 API requests per 60-second fixed window. The quota is applied after token verification but before the Firestore membership lookup, reducing repeated authorization-store reads.
 - Exceeded requests receive HTTP 429 and a `Retry-After` header.
 - The counter is in-process and keyed by verified Firebase UID, so it does not trust client-supplied `X-Forwarded-For` headers.
 - **Scaling boundary:** this is a single-process/single-instance guard, not a distributed quota. Before running multiple API instances or workers, replace the in-memory counter with shared storage such as Render Key Value/Redis. Do not claim cross-instance enforcement until that migration is tested.
