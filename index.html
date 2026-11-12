@@ -721,6 +721,7 @@
             errBox.classList.add('hidden');
 
             let createdUser = null;
+            let profileCreated = false;
             try {
                 const credential = await auth.createUserWithEmailAndPassword(email, pass);
                 createdUser = credential.user;
@@ -732,6 +733,7 @@
                     // Keep this type aligned with firestore.rules and admin expiry updates.
                     expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
+                profileCreated = true;
                 const token = await createdUser.getIdToken(true);
                 const mailResponse = await fetch(API_BASE_URL + '/api/auth/send-verification', {
                     method: 'POST',
@@ -749,7 +751,9 @@
                     } catch (signOutError) {
                         console.error("Không thể đăng xuất sau lỗi tạo hồ sơ:", signOutError);
                     }
-                    errBox.innerText = "Tài khoản đăng nhập đã được tạo nhưng chưa lưu được hồ sơ Firestore. Anh hãy thử đăng nhập lại để hệ thống tạo hồ sơ tự động. Chi tiết: " + err.message;
+                    errBox.innerText = profileCreated
+                        ? "Tài khoản và hồ sơ đã được tạo, nhưng email xác minh chưa gửi được. Anh có thể đăng nhập rồi chọn Gửi lại email xác minh. Chi tiết: " + err.message
+                        : "Tài khoản đăng nhập đã được tạo nhưng chưa lưu được hồ sơ Firestore. Anh hãy thử đăng nhập lại để hệ thống tạo hồ sơ tự động. Chi tiết: " + err.message;
                 } else {
                     errBox.innerText = "Lỗi đăng ký: " + err.message;
                 }
