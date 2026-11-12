@@ -120,18 +120,49 @@
                 </button>
             </div>
             <div class="p-5 overflow-y-auto space-y-4 flex-grow">
-                <div class="overflow-x-auto">
+                <div class="grid grid-cols-3 gap-2">
+                    <div class="rounded-xl border border-slate-800 bg-slate-950 p-3">
+                        <p class="text-[10px] uppercase tracking-wide text-slate-500">Tổng tài khoản</p>
+                        <p id="admin-count-total" class="mt-1 text-xl font-black text-white">—</p>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950 p-3">
+                        <p class="text-[10px] uppercase tracking-wide text-slate-500">Đang hoạt động</p>
+                        <p id="admin-count-active" class="mt-1 text-xl font-black text-emerald-400">—</p>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950 p-3">
+                        <p class="text-[10px] uppercase tracking-wide text-slate-500">Hết hạn / thu hồi</p>
+                        <p id="admin-count-expired" class="mt-1 text-xl font-black text-rose-400">—</p>
+                    </div>
+                </div>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input id="admin-user-search" type="search" placeholder="Tìm theo email..."
+                        class="min-w-0 flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-amber-500">
+                    <select id="admin-user-filter" class="px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white">
+                        <option value="all">Tất cả tài khoản</option>
+                        <option value="active">Đang hoạt động</option>
+                        <option value="expired">Hết hạn / đã thu hồi</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                    <button type="button" onclick="openAdminModal()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs text-white">
+                        <i class="fa-solid fa-rotate mr-1"></i>Làm mới
+                    </button>
+                </div>
+                <p class="text-[11px] leading-relaxed text-slate-400">
+                    Với tài khoản thường, nút <b class="text-rose-300">Thu hồi</b> sẽ chặn quyền truy cập ứng dụng bằng cách đặt hạn sử dụng về quá khứ. Hồ sơ được giữ lại để tránh người dùng tự đăng ký lại; tài khoản Admin luôn được bảo vệ.
+                </p>
+                <div class="overflow-x-auto rounded-xl border border-slate-800">
                     <table class="w-full text-left text-xs">
                         <thead>
-                          <tr class="border-b border-slate-800 text-slate-400 bg-slate-950">
-                           <th class="p-3">Email</th>
-                           <th class="p-3">Hạn sử dụng</th>
-                           <th class="p-3">Quyền</th>
-                           <th class="p-3 text-right">Hành động</th>
-                          </tr>
-                         </thead>
+                            <tr class="border-b border-slate-800 text-slate-400 bg-slate-950">
+                                <th class="p-3">Email</th>
+                                <th class="p-3">Hạn sử dụng</th>
+                                <th class="p-3">Trạng thái</th>
+                                <th class="p-3">Quyền</th>
+                                <th class="p-3 text-right">Hành động</th>
+                            </tr>
+                        </thead>
                         <tbody id="admin-users-list" class="divide-y divide-slate-800">
-                            <tr><td colspan="4" class="p-4 text-center text-slate-500">Đang tải danh sách...</td></tr>
+                            <tr><td colspan="5" class="p-4 text-center text-slate-500">Nhấn Admin để tải danh sách.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -532,7 +563,8 @@
                         userData = {
                             email: user.email,
                             role: 'user',
-                            expiresAt: expireDate.toISOString()
+                            // Firestore Rules require expiresAt to be a Timestamp.
+                            expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                         };
                         await userDocRef.set(userData);
                     } else {
@@ -626,18 +658,32 @@
             const errBox = document.getElementById('register-error');
             errBox.classList.add('hidden');
 
+            let createdUser = null;
             try {
-                const cred = await auth.createUserWithEmailAndPassword(email, pass);
+                const credential = await auth.createUserWithEmailAndPassword(email, pass);
+                createdUser = credential.user;
                 const expireDate = new Date();
                 expireDate.setDate(expireDate.getDate() + 7);
-                await db.collection('allowed_users').doc(email.toLowerCase()).set({
-                    email: email,
+                await db.collection('allowed_users').doc(email.trim().toLowerCase()).set({
+                    email: createdUser.email || email.trim(),
                     role: 'user',
-                    expiresAt: expireDate.toISOString()
+                    // Keep this type aligned with firestore.rules and admin expiry updates.
+                    expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
                 alert("Đăng ký thành công tài khoản trải nghiệm 7 ngày!");
             } catch (err) {
-                errBox.innerText = "Lỗi đăng ký: " + err.message;
+                // If Authentication succeeded but the Firestore profile failed, sign out.
+                // A later login will retry profile provisioning in onAuthStateChanged.
+                if (createdUser) {
+                    try {
+                        await auth.signOut();
+                    } catch (signOutError) {
+                        console.error("Không thể đăng xuất sau lỗi tạo hồ sơ:", signOutError);
+                    }
+                    errBox.innerText = "Tài khoản đăng nhập đã được tạo nhưng chưa lưu được hồ sơ Firestore. Anh hãy thử đăng nhập lại để hệ thống tạo hồ sơ tự động. Chi tiết: " + err.message;
+                } else {
+                    errBox.innerText = "Lỗi đăng ký: " + err.message;
+                }
                 errBox.classList.remove('hidden');
             }
         }
@@ -674,57 +720,210 @@
 
         function closeAccountModal() { document.getElementById('account-modal').classList.add('hidden'); }
 
+        let adminUsersCache = [];
+
+        function getAdminAccountStatus(data) {
+            const expiry = parseDate(data.expiresAt);
+            if (!expiry) return { key: 'active', label: 'Không giới hạn', expiry: null };
+            if (expiry.getTime() <= Date.now()) return { key: 'expired', label: 'Đã hết hạn / thu hồi', expiry };
+            return { key: 'active', label: 'Đang hoạt động', expiry };
+        }
+
+        function renderAdminUsers() {
+            const listEl = document.getElementById('admin-users-list');
+            const search = (document.getElementById('admin-user-search')?.value || '').trim().toLowerCase();
+            const filter = document.getElementById('admin-user-filter')?.value || 'all';
+            const totalUsers = adminUsersCache.length;
+            const activeUsers = adminUsersCache.filter(item => item.data.role === 'admin' || getAdminAccountStatus(item.data).key === 'active').length;
+            const expiredUsers = adminUsersCache.filter(item => item.data.role !== 'admin' && getAdminAccountStatus(item.data).key === 'expired').length;
+            document.getElementById('admin-count-total').innerText = totalUsers;
+            document.getElementById('admin-count-active').innerText = activeUsers;
+            document.getElementById('admin-count-expired').innerText = expiredUsers;
+
+            const visibleUsers = adminUsersCache.filter(item => {
+                const isAdmin = item.data.role === 'admin';
+                const status = isAdmin ? 'admin' : getAdminAccountStatus(item.data).key;
+                return item.email.toLowerCase().includes(search)
+                    && (filter === 'all' || filter === status);
+            });
+
+            listEl.replaceChildren();
+            if (!visibleUsers.length) {
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 5;
+                cell.className = 'p-5 text-center text-slate-500';
+                cell.textContent = adminUsersCache.length ? 'Không tìm thấy tài khoản phù hợp.' : 'Chưa có tài khoản nào.';
+                row.appendChild(cell);
+                listEl.appendChild(row);
+                return;
+            }
+
+            visibleUsers.forEach(item => {
+                const { email, id, data } = item;
+                const isAdmin = data.role === 'admin';
+                const status = isAdmin ? { key: 'admin', label: 'Quản trị viên' } : getAdminAccountStatus(data);
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-slate-800/50 transition';
+
+                const emailCell = document.createElement('td');
+                emailCell.className = 'p-3 font-semibold text-white break-all';
+                emailCell.textContent = email;
+                row.appendChild(emailCell);
+
+                const expiryCell = document.createElement('td');
+                expiryCell.className = 'p-3 text-slate-300 whitespace-nowrap';
+                expiryCell.textContent = status.expiry ? status.expiry.toLocaleDateString('vi-VN') : (isAdmin ? 'Tài khoản quản trị' : 'Không giới hạn');
+                row.appendChild(expiryCell);
+
+                const statusCell = document.createElement('td');
+                statusCell.className = 'p-3';
+                const statusBadge = document.createElement('span');
+                statusBadge.className = 'px-2 py-1 rounded text-[10px] font-bold ' +
+                    (isAdmin ? 'bg-amber-500/20 text-amber-300' :
+                    status.key === 'active' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-rose-500/10 text-rose-300');
+                statusBadge.textContent = status.label;
+                statusCell.appendChild(statusBadge);
+                row.appendChild(statusCell);
+
+                const roleCell = document.createElement('td');
+                roleCell.className = 'p-3';
+                const roleBadge = document.createElement('span');
+                roleBadge.className = 'px-2 py-1 rounded text-[10px] font-bold ' +
+                    (isAdmin ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300');
+                roleBadge.textContent = isAdmin ? 'ADMIN' : 'USER';
+                roleCell.appendChild(roleBadge);
+                row.appendChild(roleCell);
+
+                const actionsCell = document.createElement('td');
+                actionsCell.className = 'p-3 text-right whitespace-nowrap';
+                if (isAdmin) {
+                    const protectedLabel = document.createElement('span');
+                    protectedLabel.className = 'text-slate-500 text-[11px]';
+                    protectedLabel.textContent = 'Được bảo vệ';
+                    actionsCell.appendChild(protectedLabel);
+                } else {
+                    const extendButton = document.createElement('button');
+                    extendButton.type = 'button';
+                    extendButton.className = 'text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3';
+                    extendButton.textContent = 'Gia hạn';
+                    extendButton.addEventListener('click', () => extendUser(id));
+                    actionsCell.appendChild(extendButton);
+
+                    const revokeButton = document.createElement('button');
+                    revokeButton.type = 'button';
+                    revokeButton.className = 'text-rose-400 hover:text-rose-300 text-xs font-bold';
+                    revokeButton.textContent = 'Thu hồi';
+                    revokeButton.addEventListener('click', () => suspendUser(id));
+                    actionsCell.appendChild(revokeButton);
+                }
+                row.appendChild(actionsCell);
+                listEl.appendChild(row);
+            });
+        }
+
         async function openAdminModal() {
             document.getElementById('admin-modal').classList.remove('hidden');
             const listEl = document.getElementById('admin-users-list');
-            listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500"><i class="fa-solid fa-spinner spinner mr-2"></i>Đang tải danh sách...</td></tr>`;
+            listEl.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-500"><i class="fa-solid fa-spinner spinner mr-2"></i>Đang tải danh sách...</td></tr>';
 
             try {
-                const snapshot = await db.collection('allowed_users').get();
-                listEl.innerHTML = '';
-                if (snapshot.empty) {
-                    listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">Chưa có người dùng nào.</td></tr>`;
-                    return;
+                let currentUser = auth.currentUser;
+                if (!currentUser) {
+                    throw new Error('Phiên đăng nhập đã hết hạn. Anh hãy đăng nhập lại.');
                 }
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    const expDate = parseDate(data.expiresAt);
-                    const tr = document.createElement('tr');
-                    tr.className = "hover:bg-slate-800/50 transition";
-                    tr.innerHTML = `
-                        <td class="p-3 font-semibold text-white">${data.email || doc.id}</td>
-                        <td class="p-3 text-slate-300">${expDate ? expDate.toLocaleDateString('vi-VN') : '—'}</td>
-                        <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${data.role === 'admin' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">${data.role || 'user'}</span></td>
-                        <td class="p-3 text-right">
-                            <button onclick="extendUser('${doc.id}')" class="text-emerald-400 hover:text-emerald-300 text-xs font-bold mr-3">+30 Ngày</button>
-                            <button onclick="deleteUser('${doc.id}')" class="text-rose-400 hover:text-rose-300 text-xs font-bold">Xóa</button>
-                        </td>
-                    `;
-                    listEl.appendChild(tr);
-                });
+
+                // Refresh the Firebase Auth profile and ID token for a current session.
+                await currentUser.reload();
+                currentUser = auth.currentUser;
+                if (!currentUser) {
+                    throw new Error('Không thể làm mới phiên đăng nhập. Anh hãy đăng nhập lại.');
+                }
+                await currentUser.getIdToken(true);
+
+                const adminEmail = (currentUser.email || '').trim().toLowerCase();
+                if (adminEmail !== 'nguyenanhtuan081196@gmail.com') {
+                    throw new Error('Tài khoản hiện tại không phải email Admin được cấp quyền.');
+                }
+                // Temporary compatibility mode: Admin access does not require email verification.
+
+                const adminDoc = await db.collection('allowed_users').doc(adminEmail).get();
+                if (!adminDoc.exists || adminDoc.data().role !== 'admin') {
+                    throw new Error('Tài khoản hiện tại không có quyền Admin.');
+                }
+
+                const snapshot = await db.collection('allowed_users').get();
+                adminUsersCache = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    email: String(doc.data().email || doc.id),
+                    data: doc.data()
+                })).sort((a, b) => a.email.localeCompare(b.email));
+
+                const searchInput = document.getElementById('admin-user-search');
+                const filterSelect = document.getElementById('admin-user-filter');
+                searchInput.oninput = renderAdminUsers;
+                filterSelect.onchange = renderAdminUsers;
+                renderAdminUsers();
             } catch (err) {
-                listEl.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">Không có quyền truy cập danh sách.</td></tr>`;
+                console.error('Không thể tải danh sách tài khoản:', err);
+                listEl.innerHTML = '';
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 5;
+                cell.className = 'p-4 text-center text-rose-400';
+                cell.textContent = err.message || 'Không có quyền truy cập danh sách.';
+                row.appendChild(cell);
+                listEl.appendChild(row);
             }
         }
 
         async function extendUser(email) {
-            const docRef = db.collection('allowed_users').doc(email);
-            const doc = await docRef.get();
-            if (doc.exists) {
+            const input = prompt('Anh muốn gia hạn thêm bao nhiêu ngày?', '30');
+            if (input === null) return;
+            const days = Number.parseInt(input.trim(), 10);
+            if (!Number.isInteger(days) || days < 1 || days > 3650) {
+                alert('Số ngày gia hạn phải là số nguyên từ 1 đến 3650.');
+                return;
+            }
+
+            try {
+                const docRef = db.collection('allowed_users').doc(email);
+                const doc = await docRef.get();
+                if (!doc.exists || doc.data().role === 'admin') {
+                    alert('Không tìm thấy tài khoản thường để gia hạn.');
+                    return;
+                }
                 let currentExpire = parseDate(doc.data().expiresAt) || new Date();
-                if (currentExpire < new Date()) currentExpire = new Date();
-                currentExpire.setDate(currentExpire.getDate() + 30);
-                await docRef.update({ expiresAt: currentExpire.toISOString() });
-                alert(`Đã gia hạn +30 ngày cho ${email}`);
-                openAdminModal();
+                if (currentExpire.getTime() < Date.now()) currentExpire = new Date();
+                currentExpire.setDate(currentExpire.getDate() + days);
+                await docRef.update({
+                    expiresAt: firebase.firestore.Timestamp.fromDate(currentExpire)
+                });
+                alert('Đã gia hạn ' + days + ' ngày cho ' + email + '.');
+                await openAdminModal();
+            } catch (err) {
+                console.error('Gia hạn tài khoản thất bại:', err);
+                alert('Không thể gia hạn tài khoản: ' + (err.message || err));
             }
         }
 
-        async function deleteUser(email) {
-            if (confirm(`Bạn có chắc chắn muốn xóa tài khoản ${email}?`)) {
-                await db.collection('allowed_users').doc(email).delete();
-                alert(`Đã xóa ${email}`);
-                openAdminModal();
+        async function suspendUser(email) {
+            const item = adminUsersCache.find(user => user.id === email);
+            if (!item || item.data.role === 'admin') {
+                alert('Không thể thu hồi tài khoản Admin hoặc tài khoản không tồn tại.');
+                return;
+            }
+            if (!confirm('Thu hồi quyền truy cập ứng dụng của ' + item.email + '? Hồ sơ sẽ được giữ lại, không xóa tài khoản Firebase Authentication.')) return;
+
+            try {
+                await db.collection('allowed_users').doc(email).update({
+                    expiresAt: firebase.firestore.Timestamp.fromDate(new Date(0))
+                });
+                alert('Đã thu hồi quyền truy cập ứng dụng của ' + item.email + '.');
+                await openAdminModal();
+            } catch (err) {
+                console.error('Thu hồi tài khoản thất bại:', err);
+                alert('Không thể thu hồi tài khoản: ' + (err.message || err));
             }
         }
 
