@@ -29,7 +29,7 @@ Set these as Render secrets/environment variables. Never commit their values.
 
 - `MONGODB_URI`: Atlas connection string.
 - `MONGODB_DATABASE`: optional; defaults to `dautu`.
-- `FIREBASE_SERVICE_ACCOUNT_JSON`: complete Firebase service-account JSON, stored as a secret. This is a server credential, not the public Firebase web config.
+- `FIREBASE_SERVICE_ACCOUNT_JSON`: complete Firebase service-account JSON, stored as a secret. This is a server credential, not the public Firebase web config.\n- `FIREBASE_ADMIN_EMAILS`: optional comma-separated server-side administrator email allow-list. Defaults to the existing administrator email `nguyenanhtuan081196@gmail.com`; set this explicitly in Render when changing administrators.
 - `CORS_ALLOWED_ORIGINS`: comma-separated exact website origins, e.g. `https://your-domain.example`.
 - `MONGODB_SERVER_SELECTION_TIMEOUT_MS`: optional; defaults to 10000.
 - `MONGODB_CONNECT_TIMEOUT_MS`: optional; defaults to 10000.
@@ -82,7 +82,7 @@ Atlas counts and representative symbols have been checked.
 - `GET /api/financials/{symbol}`
 - `GET /api/analysis/{symbol}`
 
-All `/api/*` routes require `Authorization: Bearer <Firebase ID token>`. The API never exposes the MongoDB URI or accepts arbitrary collection names from clients.
+All `/api/*` routes require `Authorization: Bearer <Firebase ID token>`. The API verifies the token (including revocation status), then independently reads `allowed_users/{lowercase-email}` through the Firebase Admin SDK. Missing records, mismatched emails, unknown roles, expired/malformed expiry values, and non-allow-listed admin identities are denied. Admin access requires both `role: "admin"` in Firestore and membership in `FIREBASE_ADMIN_EMAILS`; normal users require `role: "user"` and a future `expiresAt`. Legacy ISO-8601 expiry strings and Firestore Timestamps are supported. If Firestore cannot be reached, the API fails closed with HTTP 503. The API never exposes the MongoDB URI or accepts arbitrary collection names from clients.
 
 ## Initial JSON import
 
