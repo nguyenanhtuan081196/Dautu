@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test dependencies
-        run: python -m pip install pandas "pymongo[srv]>=4.10,<5"
+        run: python -m pip install pandas "pymongo>=4.10,<5"
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run unit tests

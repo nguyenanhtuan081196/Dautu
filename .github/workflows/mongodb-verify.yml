@@ -1,0 +1,28 @@
+name: MongoDB Atlas verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-atlas:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install MongoDB driver
+        run: python -m pip install "pymongo>=4.10,<5"
+
+      - name: Check Atlas connectivity and collection counts
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE: dautu
+        run: python -m scripts.check_mongo_status
