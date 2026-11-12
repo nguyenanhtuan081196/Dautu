@@ -1,6 +1,12 @@
 name: Import legacy JSON to MongoDB Atlas
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/mongodb-import.yml"
+      - "scripts/migrate_json_to_mongo.py"
+      - "app/database/**"
   workflow_dispatch:
     inputs:
       mode:
@@ -48,7 +54,7 @@ jobs:
           fi
 
       - name: Dry-run inventory
-        if: inputs.mode == 'dry-run'
+        if: inputs.mode != 'apply'
         run: python scripts/migrate_json_to_mongo.py
 
       - name: Import JSON snapshots to Atlas
