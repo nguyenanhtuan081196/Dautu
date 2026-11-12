@@ -8,8 +8,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+# When invoked as "python scripts/migrate_json_to_mongo.py", Python places
+# scripts/ (not the repository root) at sys.path[0]. Add the project root so
+# the app package can be imported consistently in GitHub Actions and locally.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.database.mongo import ensure_indexes, get_database
 from app.database.repositories import (
@@ -19,8 +27,6 @@ from app.database.repositories import (
     upsert_history,
     upsert_stock,
 )
-
-ROOT = Path(__file__).resolve().parents[1]
 TARGET_COLLECTIONS = (
     "stocks", "price_history", "financial_reports", "screener_results",
     "ai_analyses", "simulations", "dataset_versions", "app_metadata",
