@@ -142,6 +142,34 @@ class RequireUserTests(unittest.TestCase):
                 main.require_user("Bearer token")
         self.assertEqual(error.exception.status_code, 403)
 
+    def test_every_data_api_route_requires_user(self):
+        data_routes = [
+            route for route in main.app.routes
+            if getattr(route, "path", "").startswith("/api/")
+        ]
+        self.assertGreater(len(data_routes), 0)
+        for route in data_routes:
+            with self.subTest(path=route.path):
+                dependency_names = {
+                    getattr(dep.call, "__name__", None)
+                    for dep in route.dependant.dependencies
+                }
+                self.assertIn("require_user", dependency_names)
+
+    def test_symbol_path_parameters_are_constrained(self):
+        symbol_routes = [
+            route for route in main.app.routes
+            if "{symbol}" in getattr(route, "path", "")
+        ]
+        self.assertEqual(len(symbol_routes), 5)
+        for route in symbol_routes:
+            with self.subTest(path=route.path):
+                parameter = next(
+                    p for p in route.dependant.path_params if p.name == "symbol"
+                )
+                self.assertEqual(parameter.field_info.min_length, 1)
+                self.assertEqual(parameter.field_info.max_length, 20)
+
 
 if __name__ == "__main__":
     unittest.main()
