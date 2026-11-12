@@ -176,6 +176,10 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
     if claims.get("email_verified") is not True:
         raise HTTPException(status_code=403, detail="Email verification is required")
 
+    # Apply the quota before the Firestore membership lookup so repeated calls
+    # from one verified Firebase identity cannot hammer the authorization store.
+    _enforce_user_rate_limit(str(claims.get("uid") or claims.get("sub") or email))
+
     try:
         account = (
             firestore.client(app=_firebase_app())
@@ -194,7 +198,6 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
     if role == "admin":
         if email != ADMIN_EMAIL:
             raise HTTPException(status_code=403, detail="Admin role is not authorized for this account")
-        _enforce_user_rate_limit(str(claims.get("uid") or claims.get("sub") or email))
         claims["app_role"] = "admin"
         return claims
 
@@ -209,7 +212,6 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
     if expires_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=403, detail="Account subscription has expired")
 
-    _enforce_user_rate_limit(str(claims.get("uid") or claims.get("sub") or email))
     claims["app_role"] = "user"
     return claims
 
