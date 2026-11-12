@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import smtplib
 import threading
 import time
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from functools import lru_cache
 from typing import Any
 
@@ -124,9 +126,64 @@ if origins:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials=False,
-        allow_methods=["GET", "OPTIONS"],
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+
+_verification_send_state: dict[str, list[float]] = {}
+_verification_send_lock = threading.Lock()
+VERIFICATION_SEND_LIMIT = 3
+VERIFICATION_SEND_WINDOW_SECONDS = 3600
+
+
+def _check_verification_send_limit(email: str) -> None:
+    now = time.monotonic()
+    with _verification_send_lock:
+        recent = [
+            stamp for stamp in _verification_send_state.get(email, [])
+            if now - stamp < VERIFICATION_SEND_WINDOW_SECONDS
+        ]
+        if len(recent) >= VERIFICATION_SEND_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail="Anh đã yêu cầu gửi email quá nhiều lần. Vui lòng thử lại sau một giờ.",
+                headers={"Retry-After": "3600"},
+            )
+        recent.append(now)
+        _verification_send_state[email] = recent
+
+
+def _send_gmail_verification(recipient: str, verification_url: str) -> None:
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_APP_PASSWORD", "").replace(" ", "").strip()
+    sender = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
+    if not smtp_user or not smtp_password or not sender:
+        raise RuntimeError("Email sender is not configured on the server")
+
+    message = EmailMessage()
+    message["Subject"] = "Xác minh email tài khoản Dautu"
+    message["From"] = f"Dautu <{sender}>"
+    message["To"] = recipient
+    message.set_content(
+        "Xin chào,\n\n"
+        "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
+        "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
+        f"{verification_url}\n\n"
+        "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
+    )
+    message.add_alternative(
+        "<p>Xin chào,</p><p>Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu.</p>"
+        f'<p><a href="{verification_url}">Xác minh email Dautu</a></p>'
+        "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>",
+        subtype="html",
+    )
+    with smtplib.SMTP(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587")), timeout=20) as server:
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(smtp_user, smtp_password)
+        server.send_message(message)
 
 
 @lru_cache(maxsize=1)
@@ -142,6 +199,53 @@ def _firebase_app():
         return firebase_admin.get_app()
     except ValueError:
         return firebase_admin.initialize_app(credentials.Certificate(service_account))
+
+
+@app.post("/api/auth/send-verification")
+def send_verification_email(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    """Generate a Firebase verification link and deliver it through Gmail SMTP.
+
+    The caller must already be signed in to Firebase, but the email does not need
+    to be verified yet. The server never accepts a recipient address from the
+    browser: it uses the email claim from the verified Firebase ID token.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        claims = firebase_auth.verify_id_token(token, app=_firebase_app(), check_revoked=True)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired Firebase token") from exc
+
+    email = claims.get("email")
+    if not isinstance(email, str) or not email.strip():
+        raise HTTPException(status_code=403, detail="A valid account email is required")
+    email = email.strip().lower()
+    if claims.get("email_verified") is True:
+        raise HTTPException(status_code=409, detail="Email này đã được xác minh.")
+
+    _check_verification_send_limit(email)
+    frontend_url = os.getenv("FRONTEND_URL", "https://mimohouse.ddns.net").strip()
+    try:
+        action_settings = firebase_auth.ActionCodeSettings(
+            url=frontend_url,
+            handle_code_in_app=False,
+        )
+        verification_url = firebase_auth.generate_email_verification_link(
+            email, action_code_settings=action_settings, app=_firebase_app()
+        )
+        _send_gmail_verification(email, verification_url)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Keep SMTP credentials and provider internals out of public responses.
+        raise HTTPException(
+            status_code=503,
+            detail="Máy chủ chưa gửi được email. Vui lòng kiểm tra cấu hình SMTP trên Render.",
+        ) from exc
+    return {"status": "sent", "message": "Verification email sent"}
 
 
 ADMIN_EMAIL = "nguyenanhtuan081196@gmail.com"

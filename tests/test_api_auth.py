@@ -144,9 +144,14 @@ class RequireUserTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 403)
 
     def test_every_data_api_route_requires_user(self):
+        # Email verification is intentionally available before a new account
+        # has verified its email or received an application membership record.
+        # That endpoint validates the Firebase ID token itself and must not use
+        # require_user, which explicitly rejects unverified accounts.
         data_routes = [
             route for route in main.app.routes
             if getattr(route, "path", "").startswith("/api/")
+            and getattr(route, "path", "") != "/api/auth/send-verification"
         ]
         self.assertGreater(len(data_routes), 0)
         for route in data_routes:

@@ -700,8 +700,14 @@
                 return;
             }
             try {
-                await user.sendEmailVerification();
-                alert('Đã gửi lại email xác minh. Vui lòng kiểm tra hộp thư và thư mục Spam.');
+                const token = await user.getIdToken(true);
+                const response = await fetch(API_BASE_URL + '/api/auth/send-verification', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.detail || 'Không thể gửi email xác minh.');
+                alert('Máy chủ đã gửi email xác minh. Anh hãy kiểm tra Inbox và Spam.');
             } catch (err) {
                 alert('Không thể gửi email xác minh: ' + (err.message || err));
             }
@@ -715,6 +721,7 @@
             errBox.classList.add('hidden');
 
             let createdUser = null;
+            let profileCreated = false;
             try {
                 const credential = await auth.createUserWithEmailAndPassword(email, pass);
                 createdUser = credential.user;
@@ -726,8 +733,15 @@
                     // Keep this type aligned with firestore.rules and admin expiry updates.
                     expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
-                await createdUser.sendEmailVerification();
-                alert("Đăng ký thành công! Hãy mở email để xác minh địa chỉ trước khi sử dụng hệ thống.");
+                profileCreated = true;
+                const token = await createdUser.getIdToken(true);
+                const mailResponse = await fetch(API_BASE_URL + '/api/auth/send-verification', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }
+                });
+                const mailPayload = await mailResponse.json().catch(() => ({}));
+                if (!mailResponse.ok) throw new Error(mailPayload.detail || 'Máy chủ không gửi được email xác minh.');
+                alert("Đăng ký thành công! Máy chủ đã gửi email xác minh. Hãy kiểm tra Inbox và Spam.");
             } catch (err) {
                 // If Authentication succeeded but the Firestore profile failed, sign out.
                 // A later login will retry profile provisioning in onAuthStateChanged.
@@ -737,7 +751,9 @@
                     } catch (signOutError) {
                         console.error("Không thể đăng xuất sau lỗi tạo hồ sơ:", signOutError);
                     }
-                    errBox.innerText = "Tài khoản đăng nhập đã được tạo nhưng chưa lưu được hồ sơ Firestore. Anh hãy thử đăng nhập lại để hệ thống tạo hồ sơ tự động. Chi tiết: " + err.message;
+                    errBox.innerText = profileCreated
+                        ? "Tài khoản và hồ sơ đã được tạo, nhưng email xác minh chưa gửi được. Anh có thể đăng nhập rồi chọn Gửi lại email xác minh. Chi tiết: " + err.message
+                        : "Tài khoản đăng nhập đã được tạo nhưng chưa lưu được hồ sơ Firestore. Anh hãy thử đăng nhập lại để hệ thống tạo hồ sơ tự động. Chi tiết: " + err.message;
                 } else {
                     errBox.innerText = "Lỗi đăng ký: " + err.message;
                 }
