@@ -20,11 +20,13 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test dependencies
-        run: python -m pip install pandas "pymongo>=4.10,<5"
+        run: python -m pip install pandas "pymongo>=4.10,<5" "fastapi>=0.115,<1" "firebase-admin>=6.5,<8"
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+      - name: Run API authentication security tests
+        run: python -m unittest tests.test_api_auth -v
       - name: Run Quant Screener smoke test against repository data
         run: python advanced_screener.py --smoke-test-json
 
