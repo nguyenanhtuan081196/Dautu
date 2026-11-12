@@ -42,6 +42,7 @@ class FakeFirestore:
 
 class RequireUserTests(unittest.TestCase):
     def setUp(self):
+        main._rate_limit_state.clear()
         self.app = object()
         self.valid_claims = {
             "uid": "uid-123",
@@ -171,6 +172,37 @@ class RequireUserTests(unittest.TestCase):
                 self.assertIn("min_length=1", metadata)
                 self.assertIn("max_length=20", metadata)
                 self.assertIn("pattern=", metadata)
+
+    def test_authenticated_user_rate_limit_returns_retry_after(self):
+        with patch.object(main, "RATE_LIMIT_MAX_REQUESTS", 2):
+            main._enforce_user_rate_limit("uid-rate-test", now=100.0)
+            main._enforce_user_rate_limit("uid-rate-test", now=101.0)
+            with self.assertRaises(HTTPException) as error:
+                main._enforce_user_rate_limit("uid-rate-test", now=102.0)
+            self.assertEqual(error.exception.status_code, 429)
+            self.assertIn("Retry-After", error.exception.headers)
+            main._enforce_user_rate_limit("uid-rate-test", now=161.0)
+
+    def test_allowed_hosts_uses_render_hostname_and_explicit_custom_hosts(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "API_ALLOWED_HOSTS": "api.example.com, www.example.com",
+                "RENDER_EXTERNAL_HOSTNAME": "dautu-api.onrender.com",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                main._allowed_hosts(),
+                ["api.example.com", "www.example.com", "dautu-api.onrender.com"],
+            )
+
+    def test_response_field_allowlists_exclude_unreviewed_document_fields(self):
+        self.assertIn("company_name", main.STOCK_RESPONSE_FIELDS)
+        self.assertIn("ai_recommendation", main.STOCK_RESPONSE_FIELDS)
+        self.assertNotIn("raw_payload", main.STOCK_RESPONSE_FIELDS)
+        self.assertNotIn("run_id", main.SCREENER_RESPONSE_FIELDS)
+        self.assertNotIn("provider_response", main.AI_RESPONSE_FIELDS)
 
 
 if __name__ == "__main__":
