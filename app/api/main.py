@@ -8,7 +8,7 @@ from functools import lru_cache
 from typing import Any
 
 import firebase_admin
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
@@ -28,6 +28,17 @@ app = FastAPI(
 def _allowed_origins() -> list[str]:
     raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Cache-Control", "no-store")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    return response
 
 
 origins = _allowed_origins()
@@ -138,11 +149,12 @@ def startup() -> None:
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
+    """Public platform health probe; disclose no dependency or infrastructure details."""
     try:
         ping_database()
-        return {"status": "ok", "database": "connected"}
+        return {"status": "ok"}
     except Exception:
-        raise HTTPException(status_code=503, detail="Database unavailable")
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
 
 @app.get("/api/status")
@@ -167,7 +179,7 @@ def list_stocks(
 
 @app.get("/api/stocks/{symbol}")
 def get_stock(
-    symbol: str,
+    symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
 ) -> dict[str, Any]:
@@ -198,7 +210,7 @@ def get_history(
             db.price_history.find(
                 {"symbol": symbol.upper(), "interval": interval},
                 {"_id": 0, "symbol": 0, "interval": 0, "updated_at": 0},
-            ).sort("time", 1)
+            ).sort("time", 1).limit(5000)
         )
     if not any(result.values()):
         raise HTTPException(status_code=404, detail="History not found")
@@ -215,7 +227,7 @@ def get_financials(
         db.financial_reports.find(
             {"symbol": symbol.upper()},
             {"_id": 0, "symbol": 0, "updated_at": 0},
-        )
+        ).limit(20)
     )
     if not docs:
         raise HTTPException(status_code=404, detail="Financial reports not found")
