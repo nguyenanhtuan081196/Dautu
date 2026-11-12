@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'last_update.json' # Kích hoạt khi file last_update.json thay đổi trên nhánh chính
-  workflow_dispatch: # Vẫn giữ lại tùy chọn chạy thủ công
+      - 'last_update.json'
+  workflow_dispatch:
 
 concurrency:
   group: dautu-data-main
@@ -35,24 +35,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas numpy requests
+          pip install pandas numpy requests "pymongo>=4.10,<5"
 
       - name: Run Advanced Quant Screener
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE: dautu
+          PYTHONUNBUFFERED: 1
         run: python advanced_screener.py
 
       - name: Commit and push screener results
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          
           git add screener_results.json screener_summary.csv data.json
-          
-          # Kiểm tra xem có thay đổi hay không, nếu không thì bỏ qua
           git diff --quiet && git diff --staged --quiet && echo "No changes to commit" && exit 0
-          
           git commit -m "📊 [Screener] Cập nhật kết quả định lượng mới [$(date +'%Y-%m-%d')]"
-          
-          # Kéo các thay đổi mới nhất từ remote về (rebase) để tránh lỗi xung đột/từ chối đẩy
           git pull --rebase origin main
-          
           git push origin main
