@@ -200,7 +200,7 @@ def get_screener(
 
 @app.get("/api/history/{symbol}")
 def get_history(
-    symbol: str,
+    symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
 ) -> dict[str, list[dict[str, Any]]]:
@@ -219,7 +219,7 @@ def get_history(
 
 @app.get("/api/financials/{symbol}")
 def get_financials(
-    symbol: str,
+    symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
 ) -> dict[str, Any]:
@@ -236,7 +236,7 @@ def get_financials(
 
 @app.get("/api/analysis/{symbol}")
 def get_analysis(
-    symbol: str,
+    symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
 ) -> dict[str, Any]:
