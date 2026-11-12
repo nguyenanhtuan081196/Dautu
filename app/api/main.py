@@ -9,11 +9,12 @@ from typing import Any
 import firebase_admin
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from firebase_admin import auth as firebase_auth, credentials
+from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
 
 from app.database.mongo import ensure_indexes, get_database, ping_database
 from app.database.repositories import get_metadata
+from app.api.security import authorize_account
 
 app = FastAPI(
     title="Dautu API",
@@ -55,16 +56,38 @@ def _firebase_app():
         return firebase_admin.initialize_app(credentials.Certificate(service_account))
 
 
+@lru_cache(maxsize=1)
+def _firestore_client():
+    return firestore.client(app=_firebase_app())
+
+
 def require_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
     token = authorization.removeprefix("Bearer ").strip()
     try:
-        return firebase_auth.verify_id_token(token, app=_firebase_app(), check_revoked=True)
+        firebase_app = _firebase_app()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        claims = firebase_auth.verify_id_token(token, app=firebase_app, check_revoked=True)
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired Firebase token") from exc
+
+    email = claims.get("email")
+    if not isinstance(email, str) or not email.strip():
+        raise HTTPException(status_code=403, detail="Firebase account has no email")
+    email_key = email.strip().lower()
+    try:
+        snapshot = _firestore_client().collection("allowed_users").document(email_key).get()
+        account = snapshot.to_dict() if snapshot.exists else None
+        return authorize_account(claims, account)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Fail closed if the trusted authorization store cannot be reached.
+        raise HTTPException(status_code=503, detail="Unable to verify account access") from exc
 
 
 def db_dependency() -> Database:
