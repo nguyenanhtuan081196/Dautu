@@ -549,7 +549,7 @@
         }
         const auth = firebase.auth();
         const db = firebase.firestore();
-        const API_BASE_URL = String(window.DAUTU_API_BASE_URL || '').trim().replace(/\\/+$/, '');
+        const API_BASE_URL = String(window.DAUTU_API_BASE_URL || '').trim().replace(/\/+$/, '');
 
         async function apiFetch(path) {
             if (!API_BASE_URL) {
