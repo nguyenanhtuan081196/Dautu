@@ -23,6 +23,15 @@ class StaticEntryPointTests(unittest.TestCase):
         self.assertNotIn("docRef.delete()", app)
         self.assertNotIn("function deleteUser(email)", app)
 
+    def test_pages_workflow_publishes_only_allowlisted_frontend_assets(self):
+        workflow = (ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
+        self.assertIn("cp index.html login.html lightweight-charts.js CNAME site/", workflow)
+        self.assertIn("DAUTU_API_BASE_URL", workflow)
+        self.assertNotIn("cp data.json", workflow)
+        self.assertNotIn("cp screener_results.json", workflow)
+        self.assertNotIn("cp -r history", workflow)
+        self.assertNotIn("cp -r bctc_data", workflow)
+
     def test_frontend_reads_private_data_only_through_authenticated_api(self):
         app = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("async function apiFetch(path)", app)
