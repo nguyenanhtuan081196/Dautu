@@ -279,6 +279,40 @@ def get_screener(
     return list(db.screener_results.find({}, _safe_projection(SCREENER_RESPONSE_FIELDS)).sort("total_score", -1).limit(limit))
 
 
+SIMULATION_RESPONSE_FIELDS = (
+    "symbol", "annual_rate_percent", "start_quarter",
+    "start_price_mean", "end_quarter", "end_price_mean",
+)
+
+
+@app.get("/api/simulations")
+def list_simulations(
+    _: dict[str, Any] = Depends(require_user),
+    db: Database = Depends(db_dependency),
+    limit: int = Query(default=500, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    """Return the reviewed historical-return fields used by the investment simulator."""
+    return list(
+        db.simulations.find({}, _safe_projection(SIMULATION_RESPONSE_FIELDS))
+        .sort("symbol", 1)
+        .limit(limit)
+    )
+
+
+@app.get("/api/simulations/{symbol}")
+def get_simulation(
+    symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
+    _: dict[str, Any] = Depends(require_user),
+    db: Database = Depends(db_dependency),
+) -> dict[str, Any]:
+    doc = db.simulations.find_one(
+        {"_id": symbol.upper()}, _safe_projection(SIMULATION_RESPONSE_FIELDS)
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    return doc
+
+
 @app.get("/api/history/{symbol}")
 def get_history(
     symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),

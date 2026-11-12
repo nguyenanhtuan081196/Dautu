@@ -1,0 +1,67 @@
+name: Deploy secure Dautu frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "login.html"
+      - "lightweight-charts.js"
+      - "CNAME"
+      - "api-config.js"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build allowlisted static site
+        env:
+          DAUTU_API_BASE_URL: ${{ vars.DAUTU_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from urllib.parse import urlparse
+
+          api_url = os.environ.get("DAUTU_API_BASE_URL", "").strip().rstrip("/")
+          parsed = urlparse(api_url)
+          if parsed.scheme != "https" or not parsed.netloc or parsed.path or parsed.query or parsed.fragment:
+              raise SystemExit(
+                  "Set the repository Actions variable DAUTU_API_BASE_URL to the HTTPS API origin before deploying Pages."
+              )
+          os.makedirs("site", exist_ok=True)
+          with open("site/api-config.js", "w", encoding="utf-8") as handle:
+              handle.write("window.DAUTU_API_BASE_URL = " + json.dumps(api_url) + ";\n")
+          PY
+          cp index.html login.html lightweight-charts.js CNAME site/
+          touch site/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

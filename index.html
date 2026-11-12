@@ -11,6 +11,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+    <script src="./api-config.js"></script>
 
     <script src="./lightweight-charts.js"></script>
 
@@ -70,6 +71,9 @@
                 <div id="login-error" class="text-xs text-rose-400 hidden"></div>
                 <button type="submit" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition text-sm shadow-lg shadow-emerald-600/30">
                     Đăng Nhập Ngay
+                </button>
+                <button type="button" onclick="sendVerificationEmail()" class="w-full text-[11px] text-slate-400 hover:text-emerald-300 transition">
+                    Gửi lại email xác minh (sau khi đăng nhập)
                 </button>
             </form>
 
@@ -545,6 +549,30 @@
         }
         const auth = firebase.auth();
         const db = firebase.firestore();
+        const API_BASE_URL = String(window.DAUTU_API_BASE_URL || '').trim().replace(/\/+$/, '');
+
+        async function apiFetch(path) {
+            if (!API_BASE_URL) {
+                throw new Error('API chưa được cấu hình. Vui lòng thiết lập DAUTU_API_BASE_URL trước khi sử dụng.');
+            }
+            const user = auth.currentUser;
+            if (!user) throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+            const token = await user.getIdToken();
+            const response = await fetch(API_BASE_URL + path, {
+                method: 'GET',
+                headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+                cache: 'no-store'
+            });
+            if (!response.ok) {
+                let detail = 'Yêu cầu API thất bại (' + response.status + ')';
+                try {
+                    const payload = await response.json();
+                    if (payload && payload.detail) detail = payload.detail;
+                } catch (_) {}
+                throw new Error(detail);
+            }
+            return response.json();
+        }
 
         auth.onAuthStateChanged(async (user) => {
             const authOverlay = document.getElementById('auth-overlay');
@@ -552,7 +580,21 @@
 
             if (user) {
                 try {
-                    const emailKey = user.email.toLowerCase();
+                    await user.reload();
+                    user = auth.currentUser;
+                    if (!user) throw new Error('Phiên đăng nhập không còn hợp lệ.');
+                    await user.getIdToken(true);
+                    if (!user.emailVerified) {
+                        authOverlay.classList.remove('hidden');
+                        expiredModal.classList.add('hidden');
+                        const authError = document.getElementById('login-error');
+                        if (authError) {
+                            authError.innerText = 'Email chưa được xác minh. Hãy mở email xác minh đã gửi khi đăng ký hoặc đăng nhập rồi chọn Gửi lại email xác minh.';
+                            authError.classList.remove('hidden');
+                        }
+                        return;
+                    }
+                    const emailKey = (user.email || '').trim().toLowerCase();
                     const userDocRef = db.collection('allowed_users').doc(emailKey);
                     const doc = await userDocRef.get();
 
@@ -651,6 +693,20 @@
             }
         }
 
+        async function sendVerificationEmail() {
+            const user = auth.currentUser;
+            if (!user) {
+                alert('Hãy đăng nhập trước, sau đó gửi lại email xác minh.');
+                return;
+            }
+            try {
+                await user.sendEmailVerification();
+                alert('Đã gửi lại email xác minh. Vui lòng kiểm tra hộp thư và thư mục Spam.');
+            } catch (err) {
+                alert('Không thể gửi email xác minh: ' + (err.message || err));
+            }
+        }
+
         async function handleRegister(e) {
             e.preventDefault();
             const email = document.getElementById('reg-email').value;
@@ -670,7 +726,8 @@
                     // Keep this type aligned with firestore.rules and admin expiry updates.
                     expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
-                alert("Đăng ký thành công tài khoản trải nghiệm 7 ngày!");
+                await createdUser.sendEmailVerification();
+                alert("Đăng ký thành công! Hãy mở email để xác minh địa chỉ trước khi sử dụng hệ thống.");
             } catch (err) {
                 // If Authentication succeeded but the Firestore profile failed, sign out.
                 // A later login will retry profile provisioning in onAuthStateChanged.
@@ -1014,26 +1071,32 @@
             const icon = document.getElementById('refresh-icon');
             if (showSpinner && icon) icon.classList.add('spinner');
             try {
-                const [screenerRes, ratesRes, detailsRes] = await Promise.all([
-                    fetch('screener_results.json?t=' + new Date().getTime()),
-                    fetch('symbol_sim_rates.json?t=' + new Date().getTime()).catch(() => ({ ok: false })),
-                    fetch('quarterly_mean_details.json?t=' + new Date().getTime()).catch(() => ({ ok: false }))
+                const [screenerData, stockData, simulationData] = await Promise.all([
+                    apiFetch('/api/screener?limit=500'),
+                    apiFetch('/api/stocks?limit=500'),
+                    apiFetch('/api/simulations?limit=500')
                 ]);
 
-                if (!screenerRes.ok) throw new Error('Không thể tải screener_results.json');
-                let screenerData = await screenerRes.json();
-                if (ratesRes.ok) symbolSimRates = await ratesRes.json();
-                if (detailsRes.ok) quarterlyMeanDetails = await detailsRes.json();
-
-                let rawStockData = {};
-                try {
-                    const dataRes = await fetch('data.json?t=' + new Date().getTime());
-                    if (dataRes.ok) rawStockData = await dataRes.json();
-                } catch (e) {}
+                const stocksBySymbol = Object.fromEntries(
+                    stockData.map(stock => [stock.symbol, stock])
+                );
+                symbolSimRates = {};
+                quarterlyMeanDetails = {};
+                simulationData.forEach(item => {
+                    const symbol = item.symbol;
+                    symbolSimRates[symbol] = { annual_rate_percent: item.annual_rate_percent };
+                    quarterlyMeanDetails[symbol] = {
+                        annual_rate_percent: item.annual_rate_percent,
+                        start_quarter: item.start_quarter,
+                        start_price_mean: item.start_price_mean,
+                        end_quarter: item.end_quarter,
+                        end_price_mean: item.end_price_mean
+                    };
+                });
 
                 screenerResults = screenerData.map(item => {
                     const sym = item.symbol;
-                    const extraData = rawStockData[sym] || {};
+                    const extraData = stocksBySymbol[sym] || {};
                     return {
                         ...item,
                         company_name: extraData.company_name !== undefined ? extraData.company_name : (item.company_name || extraData.organ_name || item.organ_name || ""),
@@ -1066,7 +1129,7 @@
             } catch (error) {
                 const container = document.getElementById('stock-container');
                 if (container && showSpinner) {
-                    container.innerHTML = `<div class="col-span-full text-center py-8 text-rose-400 font-semibold bg-rose-500/10 rounded-xl border border-rose-500/30">⚠️ Chưa có file screener_results.json hoặc data.json!</div>`;
+                    container.innerHTML = `<div class="col-span-full text-center py-8 text-rose-400 font-semibold bg-rose-500/10 rounded-xl border border-rose-500/30">⚠️ Không thể tải dữ liệu từ API: ${String(error.message || error)}</div>`;
                 }
             } finally {
                 if (showSpinner && icon) icon.classList.remove('spinner');
@@ -1503,9 +1566,7 @@
             document.getElementById('chart-loading').classList.remove('hidden');
 
             try {
-                const res = await fetch(`history/${symbol}.json?t=` + new Date().getTime());
-                if (!res.ok) throw new Error();
-                currentSymbolHistory = await res.json();
+                currentSymbolHistory = await apiFetch('/api/history/' + encodeURIComponent(symbol));
                 renderChartInstance(currentSymbolHistory);
             } catch (err) {
                 document.getElementById('tv-chart-container').innerHTML = `<div class="flex items-center justify-center h-full text-rose-400 text-xs">Chưa có dữ liệu lịch sử cho mã này!</div>`;

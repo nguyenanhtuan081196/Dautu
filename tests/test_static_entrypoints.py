@@ -23,6 +23,29 @@ class StaticEntryPointTests(unittest.TestCase):
         self.assertNotIn("docRef.delete()", app)
         self.assertNotIn("function deleteUser(email)", app)
 
+    def test_pages_workflow_publishes_only_allowlisted_frontend_assets(self):
+        workflow = (ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
+        self.assertIn("cp index.html login.html lightweight-charts.js CNAME site/", workflow)
+        self.assertIn("DAUTU_API_BASE_URL", workflow)
+        self.assertNotIn("cp data.json", workflow)
+        self.assertNotIn("cp screener_results.json", workflow)
+        self.assertNotIn("cp -r history", workflow)
+        self.assertNotIn("cp -r bctc_data", workflow)
+
+    def test_frontend_reads_private_data_only_through_authenticated_api(self):
+        app = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("async function apiFetch(path)", app)
+        self.assertIn("Authorization", app)
+        self.assertIn("apiFetch('/api/screener?limit=500')", app)
+        self.assertIn("apiFetch('/api/stocks?limit=500')", app)
+        self.assertIn("apiFetch('/api/simulations?limit=500')", app)
+        self.assertIn("apiFetch('/api/history/' + encodeURIComponent(symbol))", app)
+        for legacy_asset in (
+            "screener_results.json", "symbol_sim_rates.json",
+            "quarterly_mean_details.json", "data.json", "history/",
+        ):
+            self.assertNotIn("fetch('" + legacy_asset, app)
+
     def test_admin_guard_allows_fixed_admin_email_without_verification(self):
         app = (ROOT / "index.html").read_text(encoding="utf-8")
         admin_guard = app[app.index("async function openAdminModal()"):]
