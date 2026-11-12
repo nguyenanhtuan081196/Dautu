@@ -104,5 +104,39 @@ class RequireUserTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 403)
 
 
+    def test_missing_authorization_is_denied_before_firebase(self):
+        with self.assertRaises(HTTPException) as caught:
+            main.require_user(None)
+        self.assertEqual(caught.exception.status_code, 401)
+
+    def test_invalid_firebase_token_is_denied(self):
+        with patch.object(main.firebase_auth, "verify_id_token", side_effect=ValueError("bad token")):
+            with self.assertRaises(HTTPException) as caught:
+                main.require_user("Bearer invalid-token")
+        self.assertEqual(caught.exception.status_code, 401)
+
+    def test_unknown_role_is_denied(self):
+        doc = FakeDocument({
+            "email": "user@example.com",
+            "role": "superuser",
+            "expiresAt": datetime.now(timezone.utc) + timedelta(days=1),
+        })
+        with self.assertRaises(HTTPException) as caught:
+            self.call_with_document(doc)
+        self.assertEqual(caught.exception.status_code, 403)
+
+    def test_missing_expiry_for_regular_user_is_denied(self):
+        doc = FakeDocument({"email": "user@example.com", "role": "user"})
+        with self.assertRaises(HTTPException) as caught:
+            self.call_with_document(doc)
+        self.assertEqual(caught.exception.status_code, 403)
+
+    def test_firestore_unavailable_fails_closed_with_503(self):
+        with patch.object(main.firestore, "client", side_effect=RuntimeError("unavailable")):
+            with self.assertRaises(HTTPException) as caught:
+                main.require_user("Bearer valid-token")
+        self.assertEqual(caught.exception.status_code, 503)
+
+
 if __name__ == "__main__":
     unittest.main()
