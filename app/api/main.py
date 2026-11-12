@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 
 import firebase_admin
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from firebase_admin import auth as firebase_auth, credentials
+from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
 
 from app.database.mongo import ensure_indexes, get_database, ping_database
@@ -55,16 +56,72 @@ def _firebase_app():
         return firebase_admin.initialize_app(credentials.Certificate(service_account))
 
 
+ADMIN_EMAIL = "nguyenanhtuan081196@gmail.com"
+
+
 def require_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Authenticate a Firebase user and enforce the server-side membership record.
+
+    Firestore rules protect browser access, but the Admin SDK bypasses those rules;
+    therefore every API request must independently enforce verification, role and
+    subscription expiry here.
+    """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
     token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
+
     try:
-        return firebase_auth.verify_id_token(token, app=_firebase_app(), check_revoked=True)
+        claims = firebase_auth.verify_id_token(
+            token, app=_firebase_app(), check_revoked=True
+        )
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from exc
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired Firebase token") from exc
+
+    email = claims.get("email")
+    if not isinstance(email, str) or not email.strip():
+        raise HTTPException(status_code=403, detail="A verified email address is required")
+    email = email.strip().lower()
+    if claims.get("email_verified") is not True:
+        raise HTTPException(status_code=403, detail="Email verification is required")
+
+    try:
+        account = (
+            firestore.client(app=_firebase_app())
+            .collection("allowed_users")
+            .document(email)
+            .get()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Account authorization service unavailable") from exc
+
+    if not account.exists:
+        raise HTTPException(status_code=403, detail="Account is not authorized")
+    account_data = account.to_dict() or {}
+    role = account_data.get("role")
+
+    if role == "admin":
+        if email != ADMIN_EMAIL:
+            raise HTTPException(status_code=403, detail="Admin role is not authorized for this account")
+        claims["app_role"] = "admin"
+        return claims
+
+    if role != "user":
+        raise HTTPException(status_code=403, detail="Account role is not authorized")
+
+    expires_at = account_data.get("expiresAt")
+    if not isinstance(expires_at, datetime):
+        raise HTTPException(status_code=403, detail="Account subscription expiry is invalid")
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=403, detail="Account subscription has expired")
+
+    claims["app_role"] = "user"
+    return claims
 
 
 def db_dependency() -> Database:
