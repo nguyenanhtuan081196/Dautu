@@ -700,8 +700,14 @@
                 return;
             }
             try {
-                await user.sendEmailVerification();
-                alert('Đã gửi lại email xác minh. Vui lòng kiểm tra hộp thư và thư mục Spam.');
+                const token = await user.getIdToken(true);
+                const response = await fetch(API_BASE_URL + '/api/auth/send-verification', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.detail || 'Không thể gửi email xác minh.');
+                alert('Máy chủ đã gửi email xác minh. Anh hãy kiểm tra Inbox và Spam.');
             } catch (err) {
                 alert('Không thể gửi email xác minh: ' + (err.message || err));
             }
@@ -726,8 +732,14 @@
                     // Keep this type aligned with firestore.rules and admin expiry updates.
                     expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
                 });
-                await createdUser.sendEmailVerification();
-                alert("Đăng ký thành công! Hãy mở email để xác minh địa chỉ trước khi sử dụng hệ thống.");
+                const token = await createdUser.getIdToken(true);
+                const mailResponse = await fetch(API_BASE_URL + '/api/auth/send-verification', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }
+                });
+                const mailPayload = await mailResponse.json().catch(() => ({}));
+                if (!mailResponse.ok) throw new Error(mailPayload.detail || 'Máy chủ không gửi được email xác minh.');
+                alert("Đăng ký thành công! Máy chủ đã gửi email xác minh. Hãy kiểm tra Inbox và Spam.");
             } catch (err) {
                 // If Authentication succeeded but the Firestore profile failed, sign out.
                 // A later login will retry profile provisioning in onAuthStateChanged.
