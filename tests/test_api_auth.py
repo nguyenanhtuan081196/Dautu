@@ -167,8 +167,10 @@ class RequireUserTests(unittest.TestCase):
                 parameter = next(
                     p for p in route.dependant.path_params if p.name == "symbol"
                 )
-                self.assertEqual(parameter.field_info.min_length, 1)
-                self.assertEqual(parameter.field_info.max_length, 20)
+                metadata = repr(parameter.field_info.metadata)
+                self.assertIn("min_length=1", metadata)
+                self.assertIn("max_length=20", metadata)
+                self.assertIn("pattern=", metadata)
 
 
 if __name__ == "__main__":
