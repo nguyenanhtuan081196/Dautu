@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from app.api.security import authorize_account
 
 
-class AuthorizeAccountTests(unittest.TestCase):
+_UNSET = object()\n\n\nclass AuthorizeAccountTests(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
         self.token = {"uid": "user-1", "email": "user@example.com"}
@@ -63,7 +63,7 @@ class AuthorizeAccountTests(unittest.TestCase):
     def test_admin_role_does_not_bypass_allowlist(self):
         token = {"uid": "attacker", "email": "attacker@example.com"}
         account = {"email": token["email"], "role": "admin"}
-        self.assert_denied(token=token, account=account)
+        with patch.dict(os.environ, {"FIREBASE_ADMIN_EMAILS": "someone-else@example.com"}):\n            self.assert_denied(token=token, account=account)
 
 
 if __name__ == "__main__":
