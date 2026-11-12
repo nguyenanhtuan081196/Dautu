@@ -85,3 +85,8 @@ The root `login.html` is a legacy URL that redirects to the canonical `index.htm
 - Chọn **Gia hạn** để nhập số ngày (1–3650). Hạn mới được lưu dưới dạng Firestore Timestamp để tương thích với Firestore Rules.
 - Chọn **Thu hồi** để chặn quyền sử dụng ứng dụng của tài khoản thường. Hồ sơ Firestore được giữ lại và đặt hạn về quá khứ; không xóa người dùng khỏi Firebase Authentication. Tài khoản Admin được khóa thao tác trong giao diện.
 - Xóa người dùng khỏi Firebase Authentication là thao tác riêng, cần backend tin cậy dùng Firebase Admin SDK; không thực hiện trực tiếp từ trình duyệt.
+
+
+## Gửi email xác minh qua Gmail trên Render
+
+Hệ thống gửi email xác minh qua Gmail SMTP từ API Render. Cách tạo Google App Password, cấu hình biến môi trường và kiểm tra sau triển khai được hướng dẫn tại `docs/RENDER_GMAIL_SETUP.md`.
