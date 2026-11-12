@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 
 import firebase_admin
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from firebase_admin import auth as firebase_auth, credentials
+from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
 
 from app.database.mongo import ensure_indexes, get_database, ping_database
@@ -60,11 +61,47 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
         raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
     token = authorization.removeprefix("Bearer ").strip()
     try:
-        return firebase_auth.verify_id_token(token, app=_firebase_app(), check_revoked=True)
+        firebase_app = _firebase_app()
+        claims = firebase_auth.verify_id_token(
+            token, app=firebase_app, check_revoked=True
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired Firebase token") from exc
+
+    # A valid Firebase identity is not, by itself, permission to use Dautu.
+    # Match the existing frontend policy: allowed_users/{lowercase email},
+    # role=user/admin, and expiresAt timestamp. Fail closed on missing records.
+    email = str(claims.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=403, detail="Account email is required")
+
+    try:
+        user_doc = firestore.client(app=firebase_app).collection("allowed_users").document(email).get()
+    except Exception as exc:
+        # Distinguish an unavailable authorization store from an access denial.
+        raise HTTPException(status_code=503, detail="Access control service unavailable") from exc
+
+    if not user_doc.exists:
+        raise HTTPException(status_code=403, detail="Account is not allowlisted")
+
+    user_data = user_doc.to_dict() or {}
+    stored_email = str(user_data.get("email") or "").strip().lower()
+    role = user_data.get("role")
+    if stored_email != email or role not in {"user", "admin"}:
+        raise HTTPException(status_code=403, detail="Account access record is invalid")
+
+    if role != "admin":
+        expiry = user_data.get("expiresAt")
+        if not isinstance(expiry, datetime):
+            raise HTTPException(status_code=403, detail="Account expiry is missing or invalid")
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=403, detail="Account access has expired")
+
+    return {**claims, "access_role": role, "access_email": email}
 
 
 def db_dependency() -> Database:
