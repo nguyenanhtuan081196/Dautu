@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
@@ -10,6 +12,7 @@ from typing import Any
 import firebase_admin
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
 
@@ -30,6 +33,78 @@ def _allowed_origins() -> list[str]:
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
+def _allowed_hosts() -> list[str]:
+    configured = [
+        host.strip()
+        for host in os.getenv("API_ALLOWED_HOSTS", "").split(",")
+        if host.strip()
+    ]
+    render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
+    if render_hostname:
+        configured.append(render_hostname)
+    # Local/test defaults only. Render supplies RENDER_EXTERNAL_HOSTNAME;
+    # custom domains must be added explicitly through API_ALLOWED_HOSTS.
+    return list(dict.fromkeys(configured or ["localhost", "127.0.0.1", "testserver"]))
+
+
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_MAX_REQUESTS = 120
+_rate_limit_state: dict[str, tuple[float, int]] = {}
+_rate_limit_lock = threading.Lock()
+
+
+def _enforce_user_rate_limit(user_id: str, now: float | None = None) -> None:
+    """Apply a per-authenticated-user fixed-window limit in this API process.
+
+    This intentionally does not trust client-supplied forwarding headers. If the
+    service is later scaled to multiple instances, move the counter to shared
+    storage (for example Render Key Value) before increasing instance count.
+    """
+    current = time.monotonic() if now is None else now
+    with _rate_limit_lock:
+        started, count = _rate_limit_state.get(user_id, (current, 0))
+        if current - started >= RATE_LIMIT_WINDOW_SECONDS:
+            started, count = current, 0
+        if count >= RATE_LIMIT_MAX_REQUESTS:
+            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (current - started)))
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please retry shortly.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        _rate_limit_state[user_id] = (started, count + 1)
+        if len(_rate_limit_state) > 5000:
+            cutoff = current - RATE_LIMIT_WINDOW_SECONDS
+            for key, (window_start, _) in list(_rate_limit_state.items()):
+                if window_start < cutoff:
+                    _rate_limit_state.pop(key, None)
+
+
+STOCK_RESPONSE_FIELDS = (
+    "symbol", "company_name", "market_cap", "total_shares", "close", "volume",
+    "pe", "pb", "eps", "roe", "roa", "dividend_yield", "cfo_latest", "cfo_ttm",
+    "debt_to_equity", "liabilities_to_equity", "gross_margin", "net_profit_ttm",
+    "recommendation", "price_zone", "updated_at", "outlook", "ai_recommendation",
+    "ai_price_zone", "macro_view", "ai_updated_at", "bctc", "bctc_evaluation",
+    "catalyst", "risks",
+)
+SCREENER_RESPONSE_FIELDS = (
+    "symbol", "sector", "close_price", "pe", "pb", "roe", "roa",
+    "dividend_yield", "profit_growth_yoy", "cfo_latest", "debt_to_equity",
+    "gross_margin", "fundamental_score", "technical_score", "valuation_score",
+    "total_score", "potential_zone", "technical_status", "technical_notes",
+    "fundamental_notes",
+)
+AI_RESPONSE_FIELDS = (
+    "symbol", "bctc", "catalyst", "risks", "outlook", "ai_recommendation",
+    "ai_price_zone", "macro_view", "ai_updated_at",
+)
+
+
+def _safe_projection(fields: tuple[str, ...]) -> dict[str, int]:
+    return {"_id": 0, **{field: 1 for field in fields}}
+
+
 @app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
@@ -40,6 +115,8 @@ async def security_headers(request, call_next):
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     return response
 
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts())
 
 origins = _allowed_origins()
 if origins:
@@ -98,6 +175,10 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
     email = email.strip().lower()
     if claims.get("email_verified") is not True:
         raise HTTPException(status_code=403, detail="Email verification is required")
+
+    # Apply the quota before the Firestore membership lookup so repeated calls
+    # from one verified Firebase identity cannot hammer the authorization store.
+    _enforce_user_rate_limit(str(claims.get("uid") or claims.get("sub") or email))
 
     try:
         account = (
@@ -174,7 +255,7 @@ def list_stocks(
     db: Database = Depends(db_dependency),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[dict[str, Any]]:
-    return list(db.stocks.find({}, {"_id": 0}).sort("symbol", 1).limit(limit))
+    return list(db.stocks.find({}, _safe_projection(STOCK_RESPONSE_FIELDS)).sort("symbol", 1).limit(limit))
 
 
 @app.get("/api/stocks/{symbol}")
@@ -183,7 +264,7 @@ def get_stock(
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
 ) -> dict[str, Any]:
-    doc = db.stocks.find_one({"_id": symbol.upper()}, {"_id": 0})
+    doc = db.stocks.find_one({"_id": symbol.upper()}, _safe_projection(STOCK_RESPONSE_FIELDS))
     if not doc:
         raise HTTPException(status_code=404, detail="Stock not found")
     return doc
@@ -195,7 +276,7 @@ def get_screener(
     db: Database = Depends(db_dependency),
     limit: int = Query(default=500, ge=1, le=1000),
 ) -> list[dict[str, Any]]:
-    return list(db.screener_results.find({}, {"_id": 0}).sort("total_score", -1).limit(limit))
+    return list(db.screener_results.find({}, _safe_projection(SCREENER_RESPONSE_FIELDS)).sort("total_score", -1).limit(limit))
 
 
 @app.get("/api/history/{symbol}")
@@ -240,7 +321,7 @@ def get_analysis(
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
 ) -> dict[str, Any]:
-    doc = db.ai_analyses.find_one({"_id": symbol.upper()}, {"_id": 0})
+    doc = db.ai_analyses.find_one({"_id": symbol.upper()}, _safe_projection(AI_RESPONSE_FIELDS))
     if not doc:
         raise HTTPException(status_code=404, detail="AI analysis not found")
     return doc
