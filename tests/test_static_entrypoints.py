@@ -23,6 +23,20 @@ class StaticEntryPointTests(unittest.TestCase):
         self.assertNotIn("docRef.delete()", app)
         self.assertNotIn("function deleteUser(email)", app)
 
+    def test_frontend_reads_private_data_only_through_authenticated_api(self):
+        app = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("async function apiFetch(path)", app)
+        self.assertIn("Authorization", app)
+        self.assertIn("apiFetch('/api/screener?limit=500')", app)
+        self.assertIn("apiFetch('/api/stocks?limit=500')", app)
+        self.assertIn("apiFetch('/api/simulations?limit=500')", app)
+        self.assertIn("apiFetch('/api/history/' + encodeURIComponent(symbol))", app)
+        for legacy_asset in (
+            "screener_results.json", "symbol_sim_rates.json",
+            "quarterly_mean_details.json", "data.json", "history/",
+        ):
+            self.assertNotIn("fetch('" + legacy_asset, app)
+
     def test_admin_guard_allows_fixed_admin_email_without_verification(self):
         app = (ROOT / "index.html").read_text(encoding="utf-8")
         admin_guard = app[app.index("async function openAdminModal()"):]
