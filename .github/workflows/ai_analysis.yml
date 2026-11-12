@@ -2,7 +2,7 @@ name: 2. Run AI Deep Analysis
 
 on:
   schedule:
-    - cron: '30 18 * * 5'   # 1h30 sáng thứ 7 giờ VN
+    - cron: '30 18 * * 5'
   workflow_dispatch:
     inputs:
       symbols:
@@ -16,9 +16,9 @@ on:
         default: 'top'
         type: choice
         options:
-          - top      # Chỉ chạy top đầu mỗi ngành (không chia batch)
-          - rest     # Chỉ chạy phần còn lại (chia batch)
-          - all      # Chạy cả top và batch hiện tại của phần còn lại
+          - top
+          - rest
+          - all
       batch:
         description: 'Batch hiện tại (chỉ dùng cho mode=rest hoặc all)'
         required: false
@@ -63,11 +63,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests "pymongo>=4.10,<5"
 
       - name: Run AI Deep Analysis
         env:
           ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE: dautu
           INPUT_SYMBOLS: ${{ inputs.symbols }}
           PYTHONUNBUFFERED: 1
           MODE: ${{ inputs.mode || 'top' }}
@@ -79,7 +81,7 @@ jobs:
           python analyze_ai.py --mode "$MODE" --batch "$BATCH" --total-batches "$TOTAL_BATCHES" $FORCE
 
       - name: Commit and push AI results
-        if: always()   # vẫn commit nếu chạy xong một phần (vì script đã ghi data.json sau mỗi mã)
+        if: always()
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
