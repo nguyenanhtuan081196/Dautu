@@ -93,6 +93,25 @@ class RenderFreePriceJobTests(unittest.TestCase):
 
     @patch("app.database.job_io.database")
     @patch("fetch_data_local.main")
+    def test_late_batch_error_preserves_confirmed_atlas_symbol_writes(self, crawler_main, get_db):
+        collection = FakeCollection()
+        get_db.return_value = SimpleNamespace(pipeline_runs=collection)
+
+        def save_then_fail(argv, *, on_symbol_saved):
+            on_symbol_saved("FPT")
+            raise RuntimeError("provider disconnected after first upsert")
+
+        crawler_main.side_effect = save_then_fail
+        from app.pipeline.price_job import run_price_job
+
+        result = run_price_job(symbols=["FPT", "MWG"], batch_size=2)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["successful_symbols"], ["FPT"])
+        self.assertEqual(result["failed_symbols"], ["MWG"])
+        self.assertIn("provider disconnected", result["error"])
+
+    @patch("app.database.job_io.database")
+    @patch("fetch_data_local.main")
     def test_successful_scheduled_run_is_idempotently_skipped(self, crawler_main, get_db):
         collection = FakeCollection()
         collection.documents["price_sync:2026-11-13"] = {
