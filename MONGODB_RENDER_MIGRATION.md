@@ -115,7 +115,7 @@ therefore does not consume the API process's event loop or request workers.
 
 The root `render.yaml` defines:
 - Service: `dautu-price-sync` (Python, Singapore, Starter plan).
-- Schedule: `30 10 * * 1-5` UTC = 17:30 Vietnam time, Monday through Friday.
+- Schedule: `30 15 * * 1-5` UTC = 22:30 Vietnam time, Monday through Friday.
 - Command: `python -m app.pipeline.price_job --sessions 30`.
 - Required secret: `MONGODB_URI` (manual secret; never committed).
 - Database: `dautu`.
