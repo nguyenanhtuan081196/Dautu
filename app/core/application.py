@@ -40,5 +40,7 @@ def create_app(
         lifespan=lifespan,
     )
     install_middleware(application)
-    application.include_router(router)
+    # Keep concrete APIRoute objects visible on app.routes for existing
+    # authorization/compatibility inspection and test tooling.
+    application.router.routes.extend(router.routes)
     return application
