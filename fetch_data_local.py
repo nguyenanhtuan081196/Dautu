@@ -151,7 +151,7 @@ def get_vndirect_ratio(symbol, ratio_code):
     return 0
 
 
-def get_company_overview(symbol, close_price=0):
+def get_company_overview(symbol, close_price=0, *, sleep_fn=None):
     company_name = COMPANY_NAMES.get(symbol, symbol)
     total_shares = 0
     market_cap = 0
@@ -171,6 +171,10 @@ def get_company_overview(symbol, close_price=0):
                 total_shares = float(data[0].get("value", 0) or 0)
     except Exception as e:
         print(f"   ⚠️ VNDirect SHARE_OUTSTANDING lỗi cho {symbol}: {e}")
+
+    # Space the fallback request even when the first endpoint returns no usable value.
+    if total_shares == 0:
+        jittered_sleep(0.25, sleep_fn=sleep_fn)
 
     if total_shares == 0:
         try:
@@ -271,6 +275,8 @@ def fetch_history_with_fallback(symbol, start_date, end_date, *, sleep_fn=None):
                     f"⚠️ vnstock v6 Market/{source} lỗi cho {symbol} "
                     f"(lần {attempt + 1}/2): {exc}"
                 )
+            if attempt == 0:
+                # Back off after either an exception or an empty provider response.
                 jittered_sleep(1, sleep_fn=sleep_fn)
         jittered_sleep(0.5, sleep_fn=sleep_fn)
     return None
@@ -437,7 +443,7 @@ def main(argv=None, *, save_fn=None, sleep_fn=None):
             print(f"⚠️ Bỏ qua {symbol} do không lấy được giá.")
             continue
 
-        company_overview = get_company_overview(symbol, close_price)
+        company_overview = get_company_overview(symbol, close_price, sleep_fn=sleep_fn)
         jittered_sleep(0.3, sleep_fn=sleep_fn)
 
         ratios = {}
