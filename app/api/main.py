@@ -317,7 +317,7 @@ async def shutdown() -> None:
         await asyncio.gather(task, return_exceptions=True)
 
 
-@router.get("/healthz")
+@router.api_route("/healthz", methods=["GET", "HEAD"])
 def healthz() -> dict[str, str]:
     """Public platform health probe; disclose no dependency or infrastructure details."""
     try:
