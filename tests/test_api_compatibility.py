@@ -3,6 +3,8 @@
 These tests intentionally exercise the existing Dautu application without
 replacing its MongoDB, Firebase membership, SMTP, or business logic adapters.
 """
+import asyncio
+import os
 import unittest
 from unittest.mock import patch
 
@@ -45,9 +47,10 @@ class ApiCompatibilityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json(), {"detail": "Service unavailable"})
 
-    def test_startup_still_creates_dautu_specific_indexes(self):
+    def test_async_startup_still_creates_dautu_specific_indexes(self):
         with patch("app.api.main.ensure_indexes") as ensure_indexes:
-            main.startup()
+            with patch.dict(os.environ, {"PRICE_SCHEDULER_ENABLED": "false"}):
+                asyncio.run(main.startup())
         ensure_indexes.assert_called_once_with()
 
     def test_security_headers_remain_present_on_health_response(self):
