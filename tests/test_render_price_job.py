@@ -116,6 +116,7 @@ class RenderPriceJobTests(unittest.TestCase):
         self.assertIn("name: dautu-price-sync", blueprint)
         self.assertIn('schedule: "30 13 * * 1-5"', blueprint)
         self.assertIn("region: singapore", blueprint)
+        self.assertIn("plan: standard", blueprint)
         self.assertIn("python -m app.pipeline.price_job --sessions 30", blueprint)
         self.assertIn("key: MONGODB_URI", blueprint)
         self.assertIn("key: FHSC_API_KEY", blueprint)
