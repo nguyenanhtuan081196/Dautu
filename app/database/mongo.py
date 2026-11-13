@@ -16,16 +16,24 @@ def _required_env(name: str) -> str:
     return value
 
 
-def _normalize_mongodb_uri(uri: str) -> str:
-    """Remove empty query parameters and set retryWrites once.
+def normalize_mongodb_uri(uri: str) -> str:
+    """Validate and normalize a MongoDB URI without overriding explicit options.
 
-    This also prevents a trailing '&' or '&&' in a copied Atlas URI from
-    being passed to PyMongo as an empty URI option.
+    Empty query parameters are removed because copied Atlas connection strings
+    can contain trailing ampersands. retryWrites defaults to true only when the
+    option is absent or explicitly blank; an explicit false is preserved.
     """
     parts = urlsplit(uri.strip())
     if parts.scheme not in {"mongodb", "mongodb+srv"}:
         raise ValueError("MONGODB_URI must start with mongodb:// or mongodb+srv://")
-    pairs = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key.strip()]
+    if not parts.netloc:
+        raise ValueError("MONGODB_URI must include a MongoDB host")
+
+    pairs = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key.strip()
+    ]
     options = {key.lower(): index for index, (key, _) in enumerate(pairs)}
     retry_index = options.get("retrywrites")
     if retry_index is None:
@@ -34,16 +42,25 @@ def _normalize_mongodb_uri(uri: str) -> str:
         key, value = pairs[retry_index]
         if not value.strip():
             pairs[retry_index] = (key, "true")
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(pairs), parts.fragment))
+
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(pairs), parts.fragment)
+    )
+
+
+# Backward-compatible private name used by existing migration tooling/tests.
+_normalize_mongodb_uri = normalize_mongodb_uri
 
 
 @lru_cache(maxsize=1)
 def get_client() -> MongoClient:
-    uri = _normalize_mongodb_uri(_required_env("MONGODB_URI"))
+    uri = normalize_mongodb_uri(_required_env("MONGODB_URI"))
     return MongoClient(
         uri,
         appname="Dautu",
-        serverSelectionTimeoutMS=int(os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT_MS", "10000")),
+        serverSelectionTimeoutMS=int(
+            os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT_MS", "10000")
+        ),
         connectTimeoutMS=int(os.getenv("MONGODB_CONNECT_TIMEOUT_MS", "10000")),
     )
 
@@ -56,8 +73,7 @@ def close_client() -> None:
     try:
         client.close()
     finally:
-        # Clear the cache even if close raises, so a later app lifespan can
-        # create a fresh client instead of reusing a closed one.
+        # Always discard a potentially closed/broken client from the cache.
         get_client.cache_clear()
 
 
@@ -74,7 +90,7 @@ def ping_database() -> bool:
 
 
 def ensure_indexes(db: Database | None = None) -> None:
-    """Create idempotent indexes. Safe to call at API/pipeline startup."""
+    """Create idempotent Dautu-specific indexes."""
     if db is None:
         db = get_database()
     db.stocks.create_index([("symbol", ASCENDING)], unique=True)

@@ -71,6 +71,14 @@ Giả sử bạn muốn chạy lần 1 (khoảng 13-14 mã):
 - Generated Python bytecode, local virtual environments, and local environment files should not be committed.
 - Historical CAGR in `simulator.py` is calculated from the quarterly mean prices without an arbitrary percentage cap. Invalid or non-positive prices are excluded rather than converted into misleading returns.
 
+## MongoDB connection configuration
+
+- Dautu uses its own MongoDB database, selected by `MONGODB_DATABASE` (defaults to `dautu`); do not reuse another project's database name or credentials.
+- Configure `MONGODB_URI`, `MONGODB_SERVER_SELECTION_TIMEOUT_MS` and `MONGODB_CONNECT_TIMEOUT_MS` as separate environment variables.
+- The URI validator accepts only `mongodb://` and `mongodb+srv://`, requires a host, removes empty query options, and defaults `retryWrites=true` only when not explicitly configured.
+- MongoDB client creation remains lazy. The FastAPI lifespan closes the cached client at shutdown; no connection is created merely to close it.
+- MongoDB indexes, collections, repositories and migration behavior remain Dautu-specific. Shared infrastructure changes are maintained separately in [server-platform](https://github.com/nguyenanhtuan081196/server-platform).
+
 ## Data-quality note
 
 The screener now calculates CFO TTM and net-profit TTM over the same four consecutive quarter labels and leaves either value unavailable when a quarter is missing or ambiguous. The calculation assumes the provider's quarter-labelled cash-flow observations are standalone quarterly values; verify provider payload semantics and monitor restatements before treating the cash-conversion score as fully validated. See `FINANCIAL_METRICS.md` for definitions and limitations.

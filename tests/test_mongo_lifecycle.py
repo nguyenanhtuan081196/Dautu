@@ -26,6 +26,32 @@ class MongoClientLifecycleTests(unittest.TestCase):
         cached_client.close.assert_called_once_with()
         self.assertEqual(mongo.get_client.cache_info().currsize, 0)
 
+    def test_close_client_clears_cache_even_if_close_raises(self):
+        with patch.dict(os.environ, {"MONGODB_URI": "mongodb://localhost:27017"}):
+            with patch("app.database.mongo.MongoClient") as mongo_client:
+                cached_client = mongo_client.return_value
+                cached_client.close.side_effect = RuntimeError("close failed")
+                mongo.get_client()
+
+                with self.assertRaisesRegex(RuntimeError, "close failed"):
+                    mongo.close_client()
+
+        self.assertEqual(mongo.get_client.cache_info().currsize, 0)
+
+    def test_client_uses_independent_connection_timeouts(self):
+        env = {
+            "MONGODB_URI": "mongodb://localhost:27017",
+            "MONGODB_SERVER_SELECTION_TIMEOUT_MS": "9000",
+            "MONGODB_CONNECT_TIMEOUT_MS": "2500",
+        }
+        with patch.dict(os.environ, env):
+            with patch("app.database.mongo.MongoClient") as mongo_client:
+                mongo.get_client()
+                kwargs = mongo_client.call_args.kwargs
+
+        self.assertEqual(kwargs["serverSelectionTimeoutMS"], 9000)
+        self.assertEqual(kwargs["connectTimeoutMS"], 2500)
+
 
 if __name__ == "__main__":
     unittest.main()
