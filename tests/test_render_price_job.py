@@ -1,11 +1,11 @@
 """Tests for the Atlas-backed, memory-bounded Render Free price scheduler."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from app.pipeline.price_job import _chunks, _normalize_symbols
+from app.pipeline.price_job import _chunks, _claim_run, _normalize_symbols, _utc_now
 from app.pipeline.scheduler import latest_due_weekday
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +37,26 @@ class RenderFreePriceJobTests(unittest.TestCase):
         batches = list(_chunks([f"S{i}" for i in range(23)], 5))
         self.assertEqual([len(batch) for batch in batches], [5, 5, 5, 5, 3])
         self.assertTrue(all(len(batch) <= 10 for batch in batches))
+
+    def test_atlas_lease_blocks_duplicate_worker_using_naive_mongo_datetime(self):
+        collection = FakeCollection()
+        collection.documents["run-1"] = {
+            "_id": "run-1",
+            "status": "running",
+            "lease_until": datetime.utcnow() + timedelta(minutes=20),
+        }
+        self.assertFalse(_claim_run(collection, "run-1", "2026-11-13", 1, 30))
+
+    def test_expired_atlas_lease_can_be_recovered_after_restart(self):
+        collection = FakeCollection()
+        collection.documents["run-2"] = {
+            "_id": "run-2",
+            "status": "running",
+            "lease_until": datetime(2000, 1, 1),
+        }
+        self.assertTrue(_claim_run(collection, "run-2", "2026-11-13", 1, 30))
+        self.assertEqual(collection.documents["run-2"]["status"], "running")
+        self.assertTrue(collection.documents["run-2"]["recovered_after_restart"])
 
     def test_scheduler_selects_latest_due_weekday_and_skips_weekends(self):
         friday_after_close = datetime.fromisoformat("2026-11-13T21:00:00+07:00")
