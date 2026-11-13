@@ -56,6 +56,7 @@ async def price_scheduler_loop() -> None:
     attempted_dates: set[str] = set()
     while True:
         # Let FastAPI finish startup and begin serving requests before any Atlas polling.
+        await asyncio.sleep(POLL_SECONDS)
         scheduled_for = None
         try:
             due_date = latest_due_weekday()
@@ -91,4 +92,3 @@ async def price_scheduler_loop() -> None:
             if scheduled_for:
                 attempted_dates.discard(scheduled_for)
             logger.exception("Price scheduler iteration failed; it will retry on the next poll")
-        await asyncio.sleep(POLL_SECONDS)
