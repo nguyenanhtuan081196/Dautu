@@ -296,7 +296,7 @@ def startup() -> None:
     ensure_indexes()
 
 
-@app.get("/healthz")
+@router.get("/healthz")
 def healthz() -> dict[str, str]:
     """Public platform health probe; disclose no dependency or infrastructure details."""
     try:
@@ -306,7 +306,7 @@ def healthz() -> dict[str, str]:
         raise HTTPException(status_code=503, detail="Service unavailable")
 
 
-@app.get("/api/status")
+@router.get("/api/status")
 def status(
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
@@ -317,7 +317,7 @@ def status(
     }
 
 
-@app.get("/api/stocks")
+@router.get("/api/stocks")
 def list_stocks(
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
@@ -326,7 +326,7 @@ def list_stocks(
     return list(db.stocks.find({}, _safe_projection(STOCK_RESPONSE_FIELDS)).sort("symbol", 1).limit(limit))
 
 
-@app.get("/api/stocks/{symbol}")
+@router.get("/api/stocks/{symbol}")
 def get_stock(
     symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
@@ -338,7 +338,7 @@ def get_stock(
     return doc
 
 
-@app.get("/api/screener")
+@router.get("/api/screener")
 def get_screener(
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
@@ -353,7 +353,7 @@ SIMULATION_RESPONSE_FIELDS = (
 )
 
 
-@app.get("/api/simulations")
+@router.get("/api/simulations")
 def list_simulations(
     _: dict[str, Any] = Depends(require_user),
     db: Database = Depends(db_dependency),
@@ -367,7 +367,7 @@ def list_simulations(
     )
 
 
-@app.get("/api/simulations/{symbol}")
+@router.get("/api/simulations/{symbol}")
 def get_simulation(
     symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
@@ -381,7 +381,7 @@ def get_simulation(
     return doc
 
 
-@app.get("/api/history/{symbol}")
+@router.get("/api/history/{symbol}")
 def get_history(
     symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
@@ -400,7 +400,7 @@ def get_history(
     return result
 
 
-@app.get("/api/financials/{symbol}")
+@router.get("/api/financials/{symbol}")
 def get_financials(
     symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
@@ -417,7 +417,7 @@ def get_financials(
     return {doc["report_type"]: doc["data"] for doc in docs}
 
 
-@app.get("/api/analysis/{symbol}")
+@router.get("/api/analysis/{symbol}")
 def get_analysis(
     symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
     _: dict[str, Any] = Depends(require_user),
