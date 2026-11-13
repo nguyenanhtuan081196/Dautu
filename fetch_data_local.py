@@ -515,6 +515,8 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
             stock_db[symbol] = {**old_data, **crawled_data}
             save_fn(db, symbol, stock_db[symbol])
             successful_symbols.append(symbol)
+            if on_symbol_saved is not None:
+                on_symbol_saved(symbol)
             jittered_sleep(1.5, sleep_fn=sleep_fn)
 
         except Exception as exc:
