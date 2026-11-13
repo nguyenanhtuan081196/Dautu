@@ -14,7 +14,6 @@ The old JSON/CSV files in the repository are legacy migration/rollback snapshots
 
 | Component | Responsibility | Durable data |
 |---|---|---|
-| Render Web Service | FastAPI, Firebase token verification, authenticated API | None on local disk |
 | Render Free Web Service | FastAPI plus an async scheduler; crawler runs in a worker thread | MongoDB Atlas only |
 | MongoDB Atlas (dautu) | Current stock data, candles, reports, screener, simulations, AI output, job audit | All operational datasets |
 | GitHub | Source control, pull requests, tests, deployment config | Source/config only |
@@ -72,10 +71,10 @@ Render Free can restart at any time and has a 512 MB memory limit. The scheduler
 The production pipeline will be migrated incrementally, with each stage isolated and tested. Keep all stages on the existing Free web service unless a separate paid-cost approval is explicitly given:
 
 1. Price history and current stock metrics — Render Free in-process scheduler, implemented in this change.
-2. Quarterly financial reports — dedicated Render job, direct upserts to financial_reports.
-3. Quant screener — reads Atlas and writes screener_results.
-4. Historical simulation — reads price_history and writes simulations.
-5. AI analysis — reads Atlas and writes ai_analyses and the required compatibility fields.
+2. Quarterly financial reports — a sequential in-process stage, direct upserts to financial_reports.
+3. Quant screener — reads Atlas and writes screener_results in a bounded run.
+4. Historical simulation — reads price_history and writes simulations in bounded batches.
+5. AI analysis — reads Atlas and writes ai_analyses and the required compatibility fields in bounded batches.
 
 Until a later stage has its Render job, its former GitHub Actions production workflow remains retired. It must not silently fall back to running on GitHub Actions or a personal computer.
 
