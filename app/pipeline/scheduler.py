@@ -70,6 +70,10 @@ async def price_scheduler_loop() -> None:
                         run_price_job,
                         scheduled_for=scheduled_for,
                     )
+                    if result.get("status") == "skipped":
+                        # A prior process may still own an unexpired Atlas lease.
+                        # Recheck on the next poll so an expired lease is recoverable.
+                        attempted_dates.discard(scheduled_for)
                     logger.info(
                         "Scheduled price sync finished for %s: status=%s success=%s failed=%s",
                         scheduled_for,
