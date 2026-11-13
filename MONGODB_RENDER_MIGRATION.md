@@ -58,7 +58,7 @@ The first automated pipeline stage is a dedicated Render Cron Job, isolated from
 - Service name: dautu-price-sync.
 - Region: Singapore.
 - Compute plan: Standard (1 CPU, 2 GB RAM) to give pandas/VNstock enough headroom.
-- Schedule: 30 13 * * 1-5 UTC = 20:30 Vietnam time, Monday-Friday.
+- Schedule: 30 12 * * 1-5 UTC = 19:30 Vietnam time, Monday-Friday. This leaves a 90-minute buffer before FHSC's 21:00 Vietnam service cutoff.
 - Command: python -m app.pipeline.price_job --sessions 30.
 - Provider: VNstock v6 Market("fhsc").equity(symbol).ohlcv(...).
 - Secret: FHSC_API_KEY.
