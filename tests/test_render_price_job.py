@@ -89,5 +89,16 @@ class RenderPriceJobTests(unittest.TestCase):
         self.assertEqual(self.pipeline_runs.updated[0][1]["$set"]["status"], "failed")
 
 
+    def test_render_blueprint_runs_price_sync_on_isolated_weekday_cron(self):
+        blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
+        self.assertIn("type: cron", blueprint)
+        self.assertIn("name: dautu-price-sync", blueprint)
+        self.assertIn('schedule: "30 10 * * 1-5"', blueprint)
+        self.assertIn("region: singapore", blueprint)
+        self.assertIn("python -m app.pipeline.price_job --sessions 30", blueprint)
+        self.assertIn("key: MONGODB_URI", blueprint)
+        self.assertIn("sync: false", blueprint)
+
+
 if __name__ == "__main__":
     unittest.main()
