@@ -10,7 +10,7 @@ from typing import Iterable
 from uuid import uuid4
 
 DEFAULT_BATCH_SIZE = 5
-RUN_LEASE_MINUTES = 90
+RUN_LEASE_MINUTES = 30
 
 
 def _utc_now() -> datetime:
@@ -116,6 +116,7 @@ def run_price_job(
     bounded_batch = min(10, max(1, configured_batch))
     db = database()
     run_id = f"price_sync:{scheduled_for}" if scheduled_for else uuid4().hex
+    previous_run = db.pipeline_runs.find_one({"_id": run_id}) or {}
     if not _claim_run(db.pipeline_runs, run_id, scheduled_for, len(target_symbols), sessions):
         return {
             "run_id": run_id,
@@ -125,16 +126,26 @@ def run_price_job(
             "symbols_failed": len(target_symbols),
         }
 
-    saved_symbols: list[str] = []
+    saved_symbols = _normalize_symbols(previous_run.get("successful_symbols", []))
+    remaining_symbols = [symbol for symbol in target_symbols if symbol not in set(saved_symbols)]
     batch_errors: list[str] = []
 
     def record_saved_symbol(symbol: str) -> None:
-        saved_symbols.append(str(symbol).strip().upper())
+        normalized = str(symbol).strip().upper()
+        if normalized not in saved_symbols:
+            saved_symbols.append(normalized)
 
     try:
-        for batch_number, batch in enumerate(_chunks(target_symbols, bounded_batch), start=1):
+        for batch_number, batch in enumerate(_chunks(remaining_symbols, bounded_batch), start=1):
             logger_prefix = f"[batch {batch_number}]"
             print(f"{logger_prefix} Processing {len(batch)} symbols; memory is released after this batch.")
+            db.pipeline_runs.update_one(
+                {"_id": run_id},
+                {"$set": {
+                    "current_batch": batch_number,
+                    "lease_until": _utc_now() + timedelta(minutes=RUN_LEASE_MINUTES),
+                }},
+            )
             try:
                 returned = crawler.main(
                     ["--symbols", ",".join(batch), "--sessions", str(sessions)],
@@ -147,6 +158,16 @@ def run_price_job(
                 print(f"{logger_prefix} Batch failed: {batch_error}")
             finally:
                 gc.collect()
+                completed_symbols = sorted(set(saved_symbols) & set(target_symbols))
+                db.pipeline_runs.update_one(
+                    {"_id": run_id},
+                    {"$set": {
+                        "successful_symbols": completed_symbols,
+                        "symbols_success": len(completed_symbols),
+                        "symbols_failed": len(target_symbols) - len(completed_symbols),
+                        "lease_until": _utc_now() + timedelta(minutes=RUN_LEASE_MINUTES),
+                    }},
+                )
             # Continue with later batches after an isolated batch failure.
 
         saved = sorted(set(saved_symbols) & set(target_symbols))
