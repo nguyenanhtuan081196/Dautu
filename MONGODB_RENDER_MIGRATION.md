@@ -15,7 +15,7 @@ The old JSON/CSV files in the repository are legacy migration/rollback snapshots
 | Component | Responsibility | Durable data |
 |---|---|---|
 | Render Web Service | FastAPI, Firebase token verification, authenticated API | None on local disk |
-| Render Cron/Worker services | Price crawler and subsequent pipeline stages | MongoDB Atlas only |
+| Render Free Web Service | FastAPI plus an async scheduler; crawler runs in a worker thread | MongoDB Atlas only |
 | MongoDB Atlas (dautu) | Current stock data, candles, reports, screener, simulations, AI output, job audit | All operational datasets |
 | GitHub | Source control, pull requests, tests, deployment config | Source/config only |
 | GitHub Pages | Static frontend assets | No market/fundamental datasets |
@@ -51,24 +51,21 @@ Configure values in the Render service's environment settings. Never commit secr
 
 The browser Firebase configuration is public client configuration; it is not the Firebase Admin service account.
 
-## Current Render price job
+## Current Render Free price scheduler
 
-The first automated pipeline stage is a dedicated Render Cron Job, isolated from the FastAPI web process.
+The existing Free Web Service runs FastAPI and starts a lightweight async scheduler from the application lifespan. The scheduler polls once per minute in the event loop, but it dispatches all VNstock/pandas work through asyncio.to_thread so API requests continue to be served. No Cron, Background Worker, paid compute, or extra Render service is created.
 
-- Service name: dautu-price-sync.
-- Region: Singapore.
-- Compute plan: Standard (1 CPU, 2 GB RAM) to give pandas/VNstock enough headroom.
-- Schedule: 30 12 * * 1-5 UTC = 19:30 Vietnam time, Monday-Friday. This leaves a 90-minute buffer before FHSC's 21:00 Vietnam service cutoff.
-- Command: python -m app.pipeline.price_job --sessions 30.
+- Service: the existing dautu-api Free Web Service in Singapore.
+- Schedule: 20:30 Asia/Ho_Chi_Minh, Monday-Friday (configurable with PRICE_SYNC_TIME).
 - Provider: VNstock v6 Market("fhsc").equity(symbol).ohlcv(...).
-- Secret: FHSC_API_KEY.
+- Secrets: existing MONGODB_URI and FHSC_API_KEY.
 - Database: MongoDB Atlas database dautu.
 
-The job refreshes the configured VN100 universe, merges the latest daily candles with existing Atlas history, derives weekly/monthly candles in memory, and upserts candles and stock metrics directly into Atlas. It does not write local JSON/CSV files or commit data to GitHub.
+The crawler processes at most five symbols per batch by default (configurable 1-10), reads one stock document at a time, upserts candles and stock metrics directly to Atlas, then runs garbage collection before the next batch. It keeps only the requested recent pandas rows and does not write runtime JSON/CSV files to Render disk.
 
-Provider retry and inter-request waits use randomized +/-20% jitter. The job records a pipeline_runs document before and after execution, including requested/successful/failed symbol counts, symbol lists, duration, and error details. A partial or failed run exits non-zero.
+The scheduler checks Atlas for a successful run for the latest due weekday. If Render sleeps or restarts after the scheduled time, it recovers that missed run on the next startup/poll. A deterministic scheduled run ID and expiring Atlas lease prevent duplicate concurrent runs; successful scheduled dates are not repeated. Provider retry and inter-request waits use randomized +/-20% jitter. All job state and audit counts are stored in pipeline_runs.
 
-The Cron service is defined declaratively in render.yaml. Merging the code does not create the Render service automatically. Before enabling the schedule, create/sync the service in Render, add MONGODB_URI and FHSC_API_KEY as secrets, and verify the service configuration. Render bills Cron compute by active minute; the current minimum charge is $1/month per Cron service. The Standard compute rate is usage-based, not a flat monthly Starter fee. Confirm the current estimate in the Render dashboard before provisioning.
+Render Free can restart at any time and has a 512 MB memory limit. The scheduler is best-effort, not a guaranteed clock: the ping service may reduce idle spin-down but cannot prevent platform restarts. Atlas-backed recovery makes the job resume on the next service start. Keep PRICE_SCHEDULER_ENABLED=true (default); PRICE_SYNC_TIME defaults to 20:30; PRICE_BATCH_SIZE defaults to 5; PRICE_SESSIONS defaults to 30.
 
 ## Pipeline rollout order
 
