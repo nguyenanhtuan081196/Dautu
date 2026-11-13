@@ -1,8 +1,7 @@
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from app.database.mongo import _normalize_mongodb_uri
+from app.database.mongo import _normalize_mongodb_uri, normalize_mongodb_uri
 from scripts.migrate_json_to_mongo import inspect_sources, migrate
 
 
@@ -33,11 +32,17 @@ class MigrationDryRunTests(unittest.TestCase):
         self.assertNotIn("retryWrites=&", normalized)
 
     def test_uri_does_not_duplicate_retry_writes(self):
-        normalized = _normalize_mongodb_uri(
+        normalized = normalize_mongodb_uri(
             "mongodb://localhost:27017/dautu?retryWrites=false"
         )
         self.assertEqual(normalized.count("retryWrites="), 1)
         self.assertIn("retryWrites=false", normalized)
+
+    def test_uri_rejects_invalid_scheme_and_missing_host(self):
+        with self.assertRaisesRegex(ValueError, "mongodb://"):
+            normalize_mongodb_uri("https://example.test")
+        with self.assertRaisesRegex(ValueError, "host"):
+            normalize_mongodb_uri("mongodb:///dautu")
 
 
 if __name__ == "__main__":
