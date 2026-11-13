@@ -1,0 +1,39 @@
+name: Render production smoke check
+
+on:
+  workflow_run:
+    workflows: ["Python tests"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-health:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Wait for Render deployment and verify API health
+        env:
+          HEALTH_URL: https://dautu-api.onrender.com/healthz
+        run: |
+          set -uo pipefail
+          for attempt in $(seq 1 18); do
+            response="$(curl --silent --show-error --connect-timeout 5 --max-time 15 --write-out $'\\n%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
+            http_code="${response##*$'\\n'}"
+            body="${response%$'\\n'*}"
+
+            if [ "$http_code" = "200" ] && BODY="$body" python -c 'import json, os, sys; data=json.loads(os.environ["BODY"]); sys.exit(0 if data == {"status": "ok"} else 1)'; then
+              echo "Production health check passed (HTTP 200): $HEALTH_URL"
+              exit 0
+            fi
+
+            echo "Attempt $attempt/18: health endpoint not ready (HTTP ${http_code:-no response}); retrying in 10 seconds."
+            sleep 10
+          done
+
+          echo "::error::Production health check did not return HTTP 200 with {\"status\":\"ok\"}."
+          exit 1
