@@ -10,6 +10,8 @@ from financial_metrics import extract_advanced_metrics_from_bctc
 import requests
 from vnstock import Market
 
+VN_TZ = datetime.timezone(datetime.timedelta(hours=7))
+
 VN100_SYMBOLS = [
     "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
     "MBB", "MSN", "MWG", "PLX", "POW", "SAB", "SHB", "SSB", "SSI", "STB",
@@ -392,9 +394,10 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
 
     total = len(target_symbols)
     successful_symbols = []
-    end_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    now_vn = datetime.datetime.now(VN_TZ)
+    end_date = now_vn.strftime("%Y-%m-%d")
     approx_days = max(num_sessions * 2, 365)
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=approx_days)).strftime("%Y-%m-%d")
+    start_date = (now_vn - datetime.timedelta(days=approx_days)).strftime("%Y-%m-%d")
 
     for i, symbol in enumerate(target_symbols):
         print(f"[{i+1}/{total}] Đang xử lý: {symbol}...")
@@ -485,7 +488,7 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
             adv_metrics = extract_advanced_metrics_from_bctc(symbol, reports=reports)
             old_data = stock_db.get(symbol, {})
 
-            current_time_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            current_time_str = datetime.datetime.now(VN_TZ).strftime("%d/%m/%Y %H:%M:%S")
 
             crawled_data = {
                 "symbol": symbol,
