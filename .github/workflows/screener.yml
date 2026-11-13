@@ -1,11 +1,10 @@
-name: Render UI & Calculate Rates Automatically
+name: Calculate Simulation Rates (No UI Rendering)
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - 'render_ui.py'
       - 'simulator.py'
       - 'screener_results.json'
       - 'last_update.json'
@@ -19,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  render-and-simulate:
+  calculate-simulations:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -41,32 +40,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy requests "pymongo>=4.10,<5"
 
-      - name: Run Python Scripts
+      - name: Calculate simulation metrics only
         env:
-          # 🔐 Firebase config được inject từ GitHub Secret (JSON string)
-          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
-          # MongoDB Atlas is now required by simulator.py
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           MONGODB_DATABASE: dautu
-        run: |
-          echo "🔄 Đang chạy script tính toán lãi suất (simulator.py)..."
-          python simulator.py
-
-          echo "🎨 Đang chạy script render giao diện (render_ui.py)..."
-          python render_ui.py
+          PYTHONUNBUFFERED: 1
+        run: python simulator.py
 
       - name: Commit and push generated files
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Đảm bảo add đầy đủ index.html và toàn bộ file JSON do simulator.py sinh ra
-          git add index.html symbol_sim_rates.json quarterly_mean_details.json
+          # Never stage the production frontend entry point from this data workflow.
+          git add symbol_sim_rates.json quarterly_mean_details.json
 
           # Kiểm tra xem có thay đổi hay không trước khi commit
           git status
 
-          git commit -m "📊 Auto-calculate symbol rates & details, then render index.html via Python" || echo "No changes to commit"
+          git commit -m "📊 Auto-calculate symbol rates & details (no UI rendering)" || echo "No changes to commit"
 
           # Kéo thay đổi mới nhất từ remote về để tránh lỗi conflict/reject
           git pull --rebase origin main
