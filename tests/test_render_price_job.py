@@ -22,10 +22,10 @@ class FakeCollection:
     def insert_one(self, document):
         self.documents[document["_id"]] = document
 
-    def update_one(self, query, update):
+    def update_one(self, query, update, upsert=False):
         self.updated.append((query, update))
         doc = self.documents.get(query.get("_id"))
-        if doc is None and update.get("upsert"):
+        if doc is None and upsert:
             doc = {"_id": query.get("_id")}
             self.documents[query.get("_id")] = doc
         if doc:
