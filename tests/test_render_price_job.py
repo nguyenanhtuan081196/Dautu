@@ -2,7 +2,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from app.pipeline.price_job import _normalize_symbols, run_price_job
 
@@ -48,9 +48,10 @@ class RenderPriceJobTests(unittest.TestCase):
         self.assertEqual(
             self.pipeline_runs.updated[0][1]["$set"]["status"], "succeeded"
         )
-        crawler_main.assert_called_once_with([
-            "--symbols", "FPT,MWG", "--sessions", "30"
-        ])
+        crawler_main.assert_called_once_with(
+            ["--symbols", "FPT,MWG", "--sessions", "30"],
+            on_symbol_saved=ANY,
+        )
 
     @patch("app.database.job_io.database")
     @patch("fetch_data_local.main", return_value=["FPT"])
@@ -74,6 +75,23 @@ class RenderPriceJobTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("provider unavailable", result["error"])
         self.assertEqual(self.pipeline_runs.updated[0][1]["$set"]["status"], "failed")
+
+    @patch("app.database.job_io.database")
+    @patch("fetch_data_local.main")
+    def test_fatal_late_error_preserves_symbols_already_upserted(self, crawler_main, get_db):
+        get_db.return_value = self.db
+
+        def save_then_fail(argv, *, on_symbol_saved):
+            on_symbol_saved("FPT")
+            raise RuntimeError("failure after first symbol")
+
+        crawler_main.side_effect = save_then_fail
+        result = run_price_job(symbols=["FPT", "MWG"], sessions=30)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["successful_symbols"], ["FPT"])
+        self.assertEqual(result["failed_symbols"], ["MWG"])
+        self.assertIn("failure after first symbol", result["error"])
 
     def test_price_crawler_jitters_every_sleep_without_global_monkeypatching(self):
         import fetch_data_local as crawler
