@@ -22,9 +22,9 @@ jobs:
         run: |
           set -uo pipefail
           for attempt in $(seq 1 18); do
-            response="$(curl --silent --show-error --connect-timeout 5 --max-time 15 --write-out $'\\n%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
-            http_code="${response##*$'\\n'}"
-            body="${response%$'\\n'*}"
+            response="$(curl --silent --show-error --connect-timeout 5 --max-time 15 --write-out $'\n%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
+            http_code="${response##*$'\n'}"
+            body="${response%$'\n'*}"
 
             if [ "$http_code" = "200" ] && BODY="$body" python -c 'import json, os, sys; data=json.loads(os.environ["BODY"]); sys.exit(0 if data == {"status": "ok"} else 1)'; then
               echo "Production health check passed (HTTP 200): $HEALTH_URL"
