@@ -55,34 +55,39 @@ async def price_scheduler_loop() -> None:
     """Poll gently; dispatch blocking VNstock/pandas work to a background thread."""
     attempted_dates: set[str] = set()
     while True:
+        scheduled_for = None
         try:
             due_date = latest_due_weekday()
             if due_date is not None:
                 scheduled_for = due_date.isoformat()
-                if scheduled_for not in attempted_dates and not await asyncio.to_thread(
-                    _has_successful_run, scheduled_for
-                ):
-                    attempted_dates.add(scheduled_for)
-                    logger.info("Starting scheduled price sync for %s (Vietnam time)", scheduled_for)
-                    from app.pipeline.price_job import run_price_job
+                if scheduled_for not in attempted_dates:
+                    already_done = await asyncio.to_thread(_has_successful_run, scheduled_for)
+                    if already_done:
+                        attempted_dates.add(scheduled_for)
+                    else:
+                        attempted_dates.add(scheduled_for)
+                        logger.info("Starting scheduled price sync for %s (Vietnam time)", scheduled_for)
+                        from app.pipeline.price_job import run_price_job
 
-                    result = await asyncio.to_thread(
-                        run_price_job,
-                        scheduled_for=scheduled_for,
-                    )
-                    if result.get("status") == "skipped":
-                        # A prior process may still own an unexpired Atlas lease.
-                        # Recheck on the next poll so an expired lease is recoverable.
-                        attempted_dates.discard(scheduled_for)
-                    logger.info(
-                        "Scheduled price sync finished for %s: status=%s success=%s failed=%s",
-                        scheduled_for,
-                        result.get("status"),
-                        result.get("symbols_success"),
-                        result.get("symbols_failed"),
-                    )
+                        result = await asyncio.to_thread(
+                            run_price_job,
+                            scheduled_for=scheduled_for,
+                        )
+                        if result.get("status") == "skipped":
+                            # A prior process may still own an unexpired Atlas lease.
+                            # Recheck on the next poll so an expired lease is recoverable.
+                            attempted_dates.discard(scheduled_for)
+                        logger.info(
+                            "Scheduled price sync finished for %s: status=%s success=%s failed=%s",
+                            scheduled_for,
+                            result.get("status"),
+                            result.get("symbols_success"),
+                            result.get("symbols_failed"),
+                        )
         except asyncio.CancelledError:
             raise
         except Exception:
+            if scheduled_for:
+                attempted_dates.discard(scheduled_for)
             logger.exception("Price scheduler iteration failed; it will retry on the next poll")
         await asyncio.sleep(POLL_SECONDS)
