@@ -7,7 +7,7 @@ from app.database.repositories import upsert_history
 import numpy as np
 from financial_metrics import extract_advanced_metrics_from_bctc
 import requests
-from vnstock import Quote
+from vnstock import Market
 
 VN100_SYMBOLS = [
     "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
@@ -234,15 +234,32 @@ def aggregate_candles(data, interval):
 
 
 def fetch_history_with_fallback(symbol, start_date, end_date):
-    sources = ['VCI', 'KBS']  # Sửa TCBS thành KBS
-    for src in sources:
+    """Fetch D1 candles using the supported vnstock v6 Market API.
+
+    FHSC is the default source. A second source can be configured explicitly
+    through VNSTOCK_MARKET_FALLBACK_SOURCE when its credentials are available.
+    """
+    primary = os.getenv("VNSTOCK_MARKET_SOURCE", "fhsc").strip().lower()
+    fallback = os.getenv("VNSTOCK_MARKET_FALLBACK_SOURCE", "").strip().lower()
+    sources = list(dict.fromkeys(source for source in (primary, fallback) if source))
+
+    for source in sources:
         for attempt in range(2):
             try:
-                quote = Quote(source=src, symbol=symbol)
-                df = quote.history(start=start_date, end=end_date)
+                market = Market(source)
+                equity = market.equity(symbol)
+                df = equity.ohlcv(
+                    start=start_date,
+                    end=end_date,
+                    interval="1D",
+                )
                 if df is not None and not df.empty:
                     return df
-            except Exception:
+            except Exception as exc:
+                print(
+                    f"⚠️ vnstock v6 Market/{source} lỗi cho {symbol} "
+                    f"(lần {attempt + 1}/2): {exc}"
+                )
                 time.sleep(1)
         time.sleep(0.5)
     return None
