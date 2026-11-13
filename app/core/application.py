@@ -8,6 +8,7 @@ from typing import Callable
 from fastapi import APIRouter, FastAPI
 
 from app.core.logging import configure_logging
+from app.database.mongo import close_client
 from app.middleware import install_middleware
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,14 @@ def create_app(
     async def lifespan(application: FastAPI):
         configure_logging()
         logger.info("Starting %s", title)
-        if startup_handler is not None:
-            startup_handler()
-        yield
-        logger.info("Stopped %s", title)
+        try:
+            if startup_handler is not None:
+                startup_handler()
+            yield
+        finally:
+            # The client is lazy; close_client is a no-op if MongoDB was never used.
+            close_client()
+            logger.info("Stopped %s", title)
 
     application = FastAPI(
         title=title,
