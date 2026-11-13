@@ -38,20 +38,24 @@ def _claim_run(collection, run_id: str, scheduled_for: str | None, total: int, s
     existing = collection.find_one({"_id": run_id})
     if existing and existing.get("status") == "succeeded":
         return False
-    if existing and existing.get("status") == "running":
-        lease_until = existing.get("lease_until")
-        if lease_until and lease_until > now:
-            return False
+    if existing:
+        if existing.get("status") == "running":
+            lease_until = existing.get("lease_until")
+            if lease_until and lease_until > now:
+                return False
+        # Reclaim failed/partial work or a stale running lease. Upserts are
+        # idempotent, so already completed symbols can safely be refreshed.
         collection.update_one(
-            {"_id": run_id, "status": "running", "lease_until": {"$lte": now}},
+            {"_id": run_id},
             {"$set": {
-                "lease_until": now + timedelta(minutes=RUN_LEASE_MINUTES),
+                "status": "running",
                 "started_at": now,
+                "lease_until": now + timedelta(minutes=RUN_LEASE_MINUTES),
                 "recovered_after_restart": True,
+                "error": None,
             }},
         )
-        refreshed = collection.find_one({"_id": run_id}) or {}
-        return refreshed.get("lease_until", now) > now
+        return True
 
     document = {
         "_id": run_id,
