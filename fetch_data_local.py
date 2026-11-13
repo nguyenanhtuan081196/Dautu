@@ -7,7 +7,7 @@ import gc
 
 # Limit native math-library worker threads to keep the Free instance predictable.
 for _thread_env in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
-    os.environ.setdefault(_thread_env, "1")
+    os.environ[_thread_env] = "1"
 
 from app.database.job_io import database, load_history, load_financial_reports, save_stock, save_last_update
 from app.database.repositories import upsert_history
