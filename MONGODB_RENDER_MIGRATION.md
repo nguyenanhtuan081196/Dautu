@@ -1,131 +1,108 @@
-# Dautu: MongoDB Atlas + Render migration
+# Dautu: Render runtime + MongoDB Atlas data architecture
 
-## Target responsibilities
+## Mandatory architecture
 
-- GitHub: source code, reviews, CI, and deployment configuration.
-- MongoDB Atlas: operational datasets. The database name defaults to `dautu`.
-- Render: authenticated API and, in a later migration phase, the scheduled Python pipeline.
-- Firebase Authentication: user identity. The browser sends a Firebase ID token to the API; the API verifies it with the Firebase Admin SDK.
+- Render is the only runtime for application Python jobs. The developer's personal computer is not required to run crawlers, screeners, simulations, or AI analysis.
+- MongoDB Atlas is the only durable operational data store. All runtime datasets are read from and written to Atlas.
+- Render is compute only. Jobs may hold response data and intermediate calculations in RAM, then upsert results to Atlas. They must not persist candles, raw provider responses, BCTC payloads, or generated datasets as JSON/CSV files on Render disks.
+- The website and FastAPI API read operational data only from Atlas. GitHub Pages contains frontend assets, not stock datasets.
+- GitHub stores source, tests, CI definitions, and deployment configuration. GitHub Actions must not run scheduled production data jobs or commit generated datasets.
 
-## Collections
+The old JSON/CSV files in the repository are legacy migration/rollback snapshots only. They are not a live data source and must not be refreshed by runtime workflows.
+
+## Runtime topology
+
+| Component | Responsibility | Durable data |
+|---|---|---|
+| Render Web Service | FastAPI, Firebase token verification, authenticated API | None on local disk |
+| Render Cron/Worker services | Price crawler and subsequent pipeline stages | MongoDB Atlas only |
+| MongoDB Atlas (dautu) | Current stock data, candles, reports, screener, simulations, AI output, job audit | All operational datasets |
+| GitHub | Source control, pull requests, tests, deployment config | Source/config only |
+| GitHub Pages | Static frontend assets | No market/fundamental datasets |
+| Firebase Authentication | User identity | Firebase-managed |
+
+## MongoDB collections
 
 | Collection | Key | Purpose |
 |---|---|---|
-| `stocks` | `_id = SYMBOL` | Current stock metrics; preserves legacy `data.json` fields |
-| `price_history` | `_id = SYMBOL:INTERVAL:DATE` | One document per symbol, interval (D1/W1/MN), and date |
-| `financial_reports` | `_id = SYMBOL:REPORT_TYPE` | Balance sheet, income statement, cash flow |
-| `screener_results` | `_id = SYMBOL` | Latest quant screener result |
-| `ai_analyses` | `_id = SYMBOL` | Latest AI analysis (collection is ready for pipeline writes) |
-| `simulations` | `_id = SYMBOL` | Latest simulation metrics |
-| `pipeline_runs` | `run_id` | Job execution audit trail |
-| `dataset_versions` | `version_id` | Dataset publication/version metadata |
-| `app_metadata` | `key` | Active dataset version and last update metadata |
+| stocks | _id = SYMBOL | Current stock metrics and compatibility fields |
+| price_history | _id = SYMBOL:INTERVAL:DATE | D1/W1/MN candles |
+| financial_reports | _id = SYMBOL:REPORT_TYPE | Balance sheet, income statement, cash flow |
+| screener_results | _id = SYMBOL | Latest quant screener result |
+| ai_analyses | _id = SYMBOL | Latest AI analysis |
+| simulations | _id = SYMBOL | Latest historical simulation metrics |
+| pipeline_runs | run_id | Job status, counts, timing, and errors |
+| dataset_versions | version_id | Dataset publication/version metadata |
+| app_metadata | key | Last update and active dataset metadata |
 
-Unique indexes are created idempotently by `app.database.mongo.ensure_indexes()`.
+Indexes are created idempotently by app.database.mongo.ensure_indexes().
 
-## Environment variables
+## Render environment variables
 
-Set these as Render secrets/environment variables. Never commit their values.
+Configure values in the Render service's environment settings. Never commit secrets.
 
-- `MONGODB_URI`: Atlas connection string.
-- `MONGODB_DATABASE`: optional; defaults to `dautu`.
-- `FIREBASE_SERVICE_ACCOUNT_JSON`: complete Firebase service-account JSON, stored as a secret. This is a server credential, not the public Firebase web config.
-- `CORS_ALLOWED_ORIGINS`: comma-separated exact website origins, e.g. `https://your-domain.example`.
-- `MONGODB_SERVER_SELECTION_TIMEOUT_MS`: optional; defaults to 10000.
-- `MONGODB_CONNECT_TIMEOUT_MS`: optional; defaults to 10000.
+- MONGODB_URI: MongoDB Atlas connection string.
+- MONGODB_DATABASE: dautu.
+- FIREBASE_SERVICE_ACCOUNT_JSON: Firebase Admin service-account JSON for the API service.
+- CORS_ALLOWED_ORIGINS: exact website origins.
+- FHSC_API_KEY: API key for VNstock's FHSC market source, required by the price Cron Job.
+- ALIBABA_API_KEY: required later by the AI-analysis job.
+- MONGODB_SERVER_SELECTION_TIMEOUT_MS and MONGODB_CONNECT_TIMEOUT_MS: optional connection timeouts.
 
-The existing browser Firebase config (`FIREBASE_CONFIG`) is public client configuration and is not a substitute for the Firebase Admin service account.
+The browser Firebase configuration is public client configuration; it is not the Firebase Admin service account.
 
-## MongoDB-backed data jobs
+## Current Render price job
 
-The following jobs now use Atlas as their operational read/write store and no longer
-perform interactive prompts or Git operations:
+The first automated pipeline stage is a dedicated Render Cron Job, isolated from the FastAPI web process.
 
-| Job | MongoDB input | MongoDB output |
-|---|---|---|
-| `fetch_data_local.py` | Existing `stocks`, D1 history, and BCTC reports | `stocks`, `price_history`, `app_metadata` |
-| `crawl_bctc.py` | None (provider crawl) | `financial_reports`, `app_metadata` |
-| `advanced_screener.py` | `stocks` | `screener_results` |
-| `analyze_ai.py` | `stocks`, `screener_results` | `ai_analyses` and AI fields on `stocks` |
-| `simulator.py` | D1 bars from `price_history` | `simulations` |
+- Service name: dautu-price-sync.
+- Region: Singapore.
+- Plan: Starter (Render Cron Jobs require a paid plan).
+- Schedule: 30 13 * * 1-5 UTC = 20:30 Vietnam time, Monday-Friday.
+- Command: python -m app.pipeline.price_job --sessions 30.
+- Provider: VNstock v6 Market("fhsc").equity(symbol).ohlcv(...).
+- Secret: FHSC_API_KEY.
+- Database: MongoDB Atlas database dautu.
 
-Run from the repository root with `MONGODB_URI` and `MONGODB_DATABASE` configured:
+The job refreshes the configured VN100 universe, merges the latest daily candles with existing Atlas history, derives weekly/monthly candles in memory, and upserts candles and stock metrics directly into Atlas. It does not write local JSON/CSV files or commit data to GitHub.
 
-```bash
-# Quarterly financial reports
-python crawl_bctc.py --all-vn100
+Provider retry and inter-request waits use randomized +/-20% jitter. The job records a pipeline_runs document before and after execution, including requested/successful/failed symbol counts, symbol lists, duration, and error details. A partial or failed run exits non-zero.
 
-# Price data (default: VN100, 30 latest sessions)
-python fetch_data_local.py --sessions 30
-python fetch_data_local.py --symbols FPT,MWG --sessions 2500
+The Cron service is defined declaratively in render.yaml. Merging the code does not create the Render service automatically. Before enabling the schedule, create/sync the service in Render, add MONGODB_URI and FHSC_API_KEY as secrets, and verify the service configuration. The Starter plan has a separate cost; do not provision it without confirming the expected billing.
 
-# Sequential analysis stages
-python advanced_screener.py
-python analyze_ai.py --mode all --force
-python simulator.py
-```
+## Pipeline rollout order
 
-The price and BCTC crawlers accept CLI arguments/environment defaults and are suitable
-for non-interactive Render jobs. Set `ALIBABA_API_KEY` for AI analysis.
-Legacy JSON files are no longer written by these jobs. Existing JSON snapshots remain
-available for rollback and for the one-time migration importer; do not remove them until
-Atlas counts and representative symbols have been checked.
+The production pipeline will be migrated incrementally, with each stage isolated and tested:
 
-## API
+1. Price history and current stock metrics — Render Cron, implemented in this change.
+2. Quarterly financial reports — dedicated Render job, direct upserts to financial_reports.
+3. Quant screener — reads Atlas and writes screener_results.
+4. Historical simulation — reads price_history and writes simulations.
+5. AI analysis — reads Atlas and writes ai_analyses and the required compatibility fields.
 
-- `GET /healthz`: database connectivity health check; no user data.
-- `GET /api/status`
-- `GET /api/stocks`
-- `GET /api/stocks/{symbol}`
-- `GET /api/screener`
-- `GET /api/history/{symbol}`
-- `GET /api/financials/{symbol}`
-- `GET /api/analysis/{symbol}`
+Until a later stage has its Render job, its former GitHub Actions production workflow remains retired. It must not silently fall back to running on GitHub Actions or a personal computer.
 
-All `/api/*` routes require `Authorization: Bearer <Firebase ID token>`. The API never exposes the MongoDB URI or accepts arbitrary collection names from clients.
+## API and frontend
 
-## Initial JSON import
+- GET /healthz: API/Atlas health check.
+- GET /api/status
+- GET /api/stocks
+- GET /api/stocks/{symbol}
+- GET /api/screener
+- GET /api/history/{symbol}
+- GET /api/financials/{symbol}
+- GET /api/analysis/{symbol}
 
-Run from the repository root after setting `MONGODB_URI` and optionally `MONGODB_DATABASE`:
+Authenticated /api/* routes require Authorization: Bearer <Firebase ID token>. The API never exposes the MongoDB URI or accepts arbitrary collection names from clients. The frontend calls the API; it does not read JSON datasets from the repository or GitHub Pages.
 
-```bash
-python -m pip install -r requirements.txt
-python scripts/migrate_json_to_mongo.py
-python scripts/migrate_json_to_mongo.py --apply
-```
+## One-time legacy import
 
-The first command is a dry run and only counts local records. The second performs idempotent upserts. It does not delete MongoDB documents that are absent from the legacy JSON files. Verify counts and sample symbols in Atlas before switching production reads.
+The migration importer is an administrative, one-time path only. It is not a recurring data pipeline. It can be used to move existing repository snapshots into Atlas after an explicit dry-run and apply confirmation. Once verified, all production reads and writes use Atlas.
 
-## Migration safety
+## Safety gates
 
-This foundation deliberately does not change the existing GitHub Actions writers, current website JSON reads, or production schedules. Do not deploy the API or disable the old workflows until:
-1. Atlas import has been checked against the legacy JSON files.
-2. Existing Python jobs have been migrated to read/write the repositories (without interactive `input()` or Git pushes).
-3. The website has been switched to the authenticated API and tested with Firebase sign-in.
-4. A single Render pipeline has passed a full end-to-end test.
-
-Keep the current JSON files as a rollback snapshot until the new pipeline has run successfully more than once.
-
-
-## Render price-crawler Cron Job
-
-The first Render pipeline stage is deployed as a dedicated **Cron Job**, not as work
-inside the FastAPI web process. It runs independently from the API instance and
-therefore does not consume the API process's event loop or request workers.
-
-The root `render.yaml` defines:
-- Service: `dautu-price-sync` (Python, Singapore, Starter plan).
-- Schedule: `30 13 * * 1-5` UTC = 20:30 Vietnam time (inside FHSC service hours), Monday through Friday.
-- Command: `python -m app.pipeline.price_job --sessions 30`.
-- Required secrets: `MONGODB_URI` and `FHSC_API_KEY` (manual secrets; never committed).
-- Database: `dautu`.
-
-The crawler uses the current vnstock v6 `Market("fhsc").equity(symbol).ohlcv(...)` interface. FHSC is the default source and requires the `FHSC_API_KEY` secret; an optional second source can be configured with `VNSTOCK_MARKET_FALLBACK_SOURCE` when its credentials are available. The wrapper invokes the existing `fetch_data_local.py` crawler, applies randomized
-20% jitter to its existing provider backoff delays, and writes a `pipeline_runs`
-record before and after each run. Each record includes status, start/end timestamps,
-duration, requested/successful/failed symbol counts, and failed symbol names. A
-partial or failed run exits non-zero so Render marks that invocation as failed.
-
-The Cron service must be created/synced in Render after this code is reviewed and
-merged. The Blueprint is declarative configuration only; adding `render.yaml` to
-GitHub does not create or start the service by itself.
+- Do not run a production crawler or any Atlas-writing job as part of CI.
+- Do not provision a paid Render service without explicit cost approval.
+- Do not enable a schedule until its secrets, database connection, and service plan have been verified.
+- Never store runtime datasets on Render disk or commit generated JSON/CSV files.
+- Do not re-enable retired GitHub Actions data workflows; their replacements must run on Render and persist to Atlas.
