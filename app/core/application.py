@@ -1,9 +1,10 @@
 """Reusable FastAPI application factory for Dautu infrastructure."""
 from __future__ import annotations
 
+import inspect
 import logging
 from contextlib import asynccontextmanager
-from typing import Callable
+from typing import Any, Callable
 
 from fastapi import APIRouter, FastAPI
 
@@ -17,7 +18,8 @@ logger = logging.getLogger(__name__)
 def create_app(
     *,
     router: APIRouter,
-    startup_handler: Callable[[], None] | None = None,
+    startup_handler: Callable[[], Any] | None = None,
+    shutdown_handler: Callable[[], Any] | None = None,
     title: str = "Dautu API",
     version: str = "1.0.0",
 ) -> FastAPI:
@@ -29,9 +31,15 @@ def create_app(
         logger.info("Starting %s", title)
         try:
             if startup_handler is not None:
-                startup_handler()
+                startup_result = startup_handler()
+                if inspect.isawaitable(startup_result):
+                    await startup_result
             yield
         finally:
+            if shutdown_handler is not None:
+                shutdown_result = shutdown_handler()
+                if inspect.isawaitable(shutdown_result):
+                    await shutdown_result
             # The client is lazy; close_client is a no-op if MongoDB was never used.
             close_client()
             logger.info("Stopped %s", title)
