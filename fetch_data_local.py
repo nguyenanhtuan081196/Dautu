@@ -1,13 +1,30 @@
 ﻿import os
 import datetime
 import time
+import random
 import argparse
-from app.database.job_io import database, load_stocks, load_history, load_financial_reports, save_stock, save_last_update
+import gc
+
+# Limit native math-library worker threads to keep the Free instance predictable.
+for _thread_env in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ[_thread_env] = "1"
+
+from app.database.job_io import database, load_history, load_financial_reports, save_stock, save_last_update
 from app.database.repositories import upsert_history
 import numpy as np
+import pandas as pd
+
+# Avoid unnecessary pandas copies while processing one symbol at a time.
+try:
+    pd.options.mode.copy_on_write = True
+except Exception:
+    # pandas versions may differ; the bounded batch strategy remains the primary guard.
+    pass
 from financial_metrics import extract_advanced_metrics_from_bctc
 import requests
-from vnstock import Quote
+from vnstock import Market
+
+VN_TZ = datetime.timezone(datetime.timedelta(hours=7))
 
 VN100_SYMBOLS = [
     "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
@@ -150,7 +167,7 @@ def get_vndirect_ratio(symbol, ratio_code):
     return 0
 
 
-def get_company_overview(symbol, close_price=0):
+def get_company_overview(symbol, close_price=0, *, sleep_fn=None):
     company_name = COMPANY_NAMES.get(symbol, symbol)
     total_shares = 0
     market_cap = 0
@@ -170,6 +187,10 @@ def get_company_overview(symbol, close_price=0):
                 total_shares = float(data[0].get("value", 0) or 0)
     except Exception as e:
         print(f"   ⚠️ VNDirect SHARE_OUTSTANDING lỗi cho {symbol}: {e}")
+
+    # Space the fallback request even when the first endpoint returns no usable value.
+    if total_shares == 0:
+        jittered_sleep(0.25, sleep_fn=sleep_fn)
 
     if total_shares == 0:
         try:
@@ -233,18 +254,47 @@ def aggregate_candles(data, interval):
     return sorted(list(groups.values()), key=lambda x: x['time'])
 
 
-def fetch_history_with_fallback(symbol, start_date, end_date):
-    sources = ['VCI', 'KBS']  # Sửa TCBS thành KBS
-    for src in sources:
+def jittered_sleep(seconds, *, sleep_fn=None, random_fn=None):
+    """Sleep with +/-20% jitter to spread provider requests over time."""
+    delay = max(0.0, float(seconds))
+    if delay == 0:
+        return
+    sleeper = sleep_fn or time.sleep
+    randomizer = random_fn or random.uniform
+    sleeper(randomizer(delay * 0.8, delay * 1.2))
+
+
+def fetch_history_with_fallback(symbol, start_date, end_date, *, sleep_fn=None):
+    """Fetch D1 candles using the supported vnstock v6 Market API.
+
+    FHSC is the default source. A second source can be configured explicitly
+    through VNSTOCK_MARKET_FALLBACK_SOURCE when its credentials are available.
+    """
+    primary = os.getenv("VNSTOCK_MARKET_SOURCE", "fhsc").strip().lower()
+    fallback = os.getenv("VNSTOCK_MARKET_FALLBACK_SOURCE", "").strip().lower()
+    sources = list(dict.fromkeys(source for source in (primary, fallback) if source))
+
+    for source in sources:
         for attempt in range(2):
             try:
-                quote = Quote(source=src, symbol=symbol)
-                df = quote.history(start=start_date, end=end_date)
+                market = Market(source)
+                equity = market.equity(symbol)
+                df = equity.ohlcv(
+                    start=start_date,
+                    end=end_date,
+                    interval="1D",
+                )
                 if df is not None and not df.empty:
                     return df
-            except Exception:
-                time.sleep(1)
-        time.sleep(0.5)
+            except Exception as exc:
+                print(
+                    f"⚠️ vnstock v6 Market/{source} lỗi cho {symbol} "
+                    f"(lần {attempt + 1}/2): {exc}"
+                )
+            if attempt == 0:
+                # Back off after either an exception or an empty provider response.
+                jittered_sleep(1, sleep_fn=sleep_fn)
+        jittered_sleep(0.5, sleep_fn=sleep_fn)
     return None
 
 
@@ -333,147 +383,186 @@ def parse_bctc_history(symbol, reports=None):
     return bctc_records
 
 
-def main():
+def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
+    """Refresh prices and upsert successful symbols directly into MongoDB Atlas.
+
+    Returns the symbols whose complete stock payload was successfully persisted.
+    """
     parser = argparse.ArgumentParser(description="Fetch prices and update MongoDB Atlas")
     parser.add_argument("--symbols", default=os.getenv("INPUT_SYMBOLS", ",".join(VN100_SYMBOLS)), help="Comma-separated symbols")
     parser.add_argument("--sessions", type=int, default=int(os.getenv("PRICE_SESSIONS", "30")), help="Number of daily sessions")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    save_fn = save_fn or save_stock
     target_symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     num_sessions = max(1, args.sessions)
     if not target_symbols:
         parser.error("At least one symbol is required")
+    primary_source = os.getenv("VNSTOCK_MARKET_SOURCE", "fhsc").strip().lower()
+    if primary_source == "fhsc" and not os.getenv("FHSC_API_KEY", "").strip():
+        raise RuntimeError("Missing required FHSC_API_KEY for VNstock source 'fhsc'")
+
     db = database()
     print(f"\n🚀 Bắt đầu cào dữ liệu cho {len(target_symbols)} mã (Lấy đúng {num_sessions} phiên giao dịch gần nhất)...")
 
-    stock_db = load_stocks(db)
-
     total = len(target_symbols)
-    end_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    successful_symbols = []
+    now_vn = datetime.datetime.now(VN_TZ)
+    end_date = now_vn.strftime("%Y-%m-%d")
     approx_days = max(num_sessions * 2, 365)
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=approx_days)).strftime("%Y-%m-%d")
+    start_date = (now_vn - datetime.timedelta(days=approx_days)).strftime("%Y-%m-%d")
 
     for i, symbol in enumerate(target_symbols):
         print(f"[{i+1}/{total}] Đang xử lý: {symbol}...")
-        closes, volumes = [], []
-        close_price, volume = 0, 0
-        history_d1 = []
-
         try:
-            df = fetch_history_with_fallback(symbol, start_date, end_date)
-            if df is not None and not df.empty:
-                df = df.tail(num_sessions)
+            closes, volumes = [], []
+            close_price, volume = 0, 0
+            history_d1 = []
 
-                closes = df['close'].tolist()
-                volumes = df['volume'].tolist()
-                close_price = closes[-1]
-                volume = volumes[-1]
+            try:
+                df = fetch_history_with_fallback(symbol, start_date, end_date, sleep_fn=sleep_fn)
+                if df is not None and not df.empty:
+                    # Copy only the requested tail so the provider's larger frame can be released.
+                    df = df.tail(num_sessions).copy()
 
-                new_history_d1 = []
-                for _, row in df.iterrows():
-                    time_val = row['time']
-                    time_str = time_val.strftime('%Y-%m-%d') if hasattr(time_val, 'strftime') else str(time_val)[:10]
+                    closes = df['close'].tolist()
+                    volumes = df['volume'].tolist()
+                    close_price = closes[-1]
+                    volume = volumes[-1]
 
-                    new_history_d1.append({
-                        "time": time_str,
-                        "open": float(row.get('open', row['close'])),
-                        "high": float(row.get('high', row['close'])),
-                        "low": float(row.get('low', row['close'])),
-                        "close": float(row['close']),
-                        "volume": int(row.get('volume', 0))
-                    })
+                    new_history_d1 = []
+                    for _, row in df.iterrows():
+                        time_val = row['time']
+                        time_str = time_val.strftime('%Y-%m-%d') if hasattr(time_val, 'strftime') else str(time_val)[:10]
 
-                existing_history_d1 = load_history(db, symbol, "D1")
-                merged_dict = {item['time']: item for item in existing_history_d1}
-                for item in new_history_d1:
-                    merged_dict[item['time']] = item
+                        new_history_d1.append({
+                            "time": time_str,
+                            "open": float(row.get('open', row['close'])),
+                            "high": float(row.get('high', row['close'])),
+                            "low": float(row.get('low', row['close'])),
+                            "close": float(row['close']),
+                            "volume": int(row.get('volume', 0))
+                        })
 
-                history_d1 = sorted(list(merged_dict.values()), key=lambda x: x['time'])
+                    existing_history_d1 = load_history(db, symbol, "D1")
+                    merged_dict = {item['time']: item for item in existing_history_d1}
+                    for item in new_history_d1:
+                        merged_dict[item['time']] = item
 
-                closes = [bar['close'] for bar in history_d1]
-                volumes = [bar['volume'] for bar in history_d1]
+                    history_d1 = sorted(list(merged_dict.values()), key=lambda x: x['time'])
 
-        except Exception as e:
-            print(f"⚠️ Lỗi xử lý lịch sử {symbol}: {e}")
+                    closes = [bar['close'] for bar in history_d1]
+                    volumes = [bar['volume'] for bar in history_d1]
 
-        if close_price <= 0:
-            print(f"⚠️ Bỏ qua {symbol} do không lấy được giá.")
+            except Exception as e:
+                print(f"⚠️ Lỗi xử lý lịch sử {symbol}: {e}")
+
+            if close_price <= 0:
+                print(f"⚠️ Bỏ qua {symbol} do không lấy được giá.")
+                continue
+
+            company_overview = get_company_overview(symbol, close_price, sleep_fn=sleep_fn)
+            jittered_sleep(0.3, sleep_fn=sleep_fn)
+
+            ratios = {}
+            for key, code in VNDIRECT_RATIOS.items():
+                ratios[key] = get_vndirect_ratio(symbol, code)
+                jittered_sleep(0.2, sleep_fn=sleep_fn)
+
+            status = "ĐANG TÍCH LŨY NỀN"
+            detail = "Đang siết nền tích lũy biên độ hẹp."
+            if len(closes) >= 20 and len(volumes) >= 20:
+                recent_vols = volumes[-20:]
+                ma_vol_20 = np.mean(recent_vols)
+                vol_ratio = volume / ma_vol_20 if ma_vol_20 > 0 else 1.0
+                price_change_pct = ((closes[-1] - closes[-2]) / closes[-2]) * 100 if closes[-2] > 0 else 0
+
+                if vol_ratio < 0.7 and abs(price_change_pct) < 1.5:
+                    status = "ĐANG TÍCH LŨY NỀN (CẠN CUNG)"
+                    detail = f"Khối lượng cạn kiệt ở mức {vol_ratio:.2f}x MA20."
+                elif vol_ratio > 1.5 and price_change_pct > 1.5:
+                    status = "SẴN SÀNG BREAKOUT (NỔ VOL)"
+                    detail = f"Khối lượng bùng nổ đạt {vol_ratio:.2f}x MA20 kèm giá tăng."
+                elif closes[-1] > np.mean(closes[-20:]):
+                    status = "ĐANG GOM HÀNG"
+                    detail = "Dòng tiền duy trì ổn định trên MA20."
+
+            history_w1 = aggregate_candles(history_d1, 'W1')
+            history_mn = aggregate_candles(history_d1, 'MN')
+
+            symbol_history_data = {
+                "history_d1": history_d1,
+                "history_w1": history_w1,
+                "history_mn": history_mn
+            }
+            upsert_history(db, symbol, symbol_history_data)
+
+            reports = load_financial_reports(db, symbol)
+            bctc_history = parse_bctc_history(symbol, reports)
+            adv_metrics = extract_advanced_metrics_from_bctc(symbol, reports=reports)
+            old_document = db.stocks.find_one({"_id": symbol}) or {}
+            old_data = {key: value for key, value in old_document.items() if key != "_id"}
+
+            current_time_str = datetime.datetime.now(VN_TZ).strftime("%d/%m/%Y %H:%M:%S")
+
+            crawled_data = {
+                "symbol": symbol,
+                "company_name": company_overview["company_name"],
+                "market_cap": round(company_overview["market_cap"] / 1e9, 2),
+                "total_shares": int(company_overview["total_shares"]),
+                "close": int(close_price * 1000),
+                "volume": int(volume),
+                "pe": round(ratios.get("pe", 0), 2),
+                "pb": round(ratios.get("pb", 0), 2),
+                "eps": int(ratios.get("eps", 0)),
+                "roe": round(ratios.get("roe", 0) * 100, 1),
+                "roa": round(ratios.get("roa", 0) * 100, 1),
+                "dividend_yield": round(ratios.get("dividend_yield", 0) * 100, 2),
+                "cfo_latest": adv_metrics["cfo_latest"],
+                "cfo_ttm": adv_metrics["cfo_ttm"],
+                "debt_to_equity": adv_metrics["debt_to_equity"],
+                "liabilities_to_equity": adv_metrics["liabilities_to_equity"],
+                "gross_margin": adv_metrics["gross_margin"],
+                "net_profit_ttm": adv_metrics["net_profit_ttm"],
+                "recommendation": status,
+                "price_zone": detail,
+                "updated_at": current_time_str,
+                "bctc_history": bctc_history,
+            }
+
+            stock_payload = {**old_data, **crawled_data}
+            save_fn(db, symbol, stock_payload)
+            del stock_payload
+            successful_symbols.append(symbol)
+            if on_symbol_saved is not None:
+                on_symbol_saved(symbol)
+            jittered_sleep(1.5, sleep_fn=sleep_fn)
+
+        except Exception as exc:
+            print(f"❌ Lỗi xử lý {symbol}: {type(exc).__name__}: {exc}")
             continue
+        finally:
+            # Drop per-symbol pandas/provider objects before moving to the next ticker.
+            if "df" in locals():
+                del df
+            df = None
+            closes = volumes = history_d1 = []
+            new_history_d1 = existing_history_d1 = []
+            merged_dict = None
+            history_w1 = history_mn = None
+            symbol_history_data = reports = bctc_history = None
+            adv_metrics = old_document = old_data = crawled_data = None
+            gc.collect()
 
-        company_overview = get_company_overview(symbol, close_price)
-        time.sleep(0.3)
-
-        ratios = {}
-        for key, code in VNDIRECT_RATIOS.items():
-            ratios[key] = get_vndirect_ratio(symbol, code)
-            time.sleep(0.2)
-
-        status = "ĐANG TÍCH LŨY NỀN"
-        detail = "Đang siết nền tích lũy biên độ hẹp."
-        if len(closes) >= 20 and len(volumes) >= 20:
-            recent_vols = volumes[-20:]
-            ma_vol_20 = np.mean(recent_vols)
-            vol_ratio = volume / ma_vol_20 if ma_vol_20 > 0 else 1.0
-            price_change_pct = ((closes[-1] - closes[-2]) / closes[-2]) * 100 if closes[-2] > 0 else 0
-
-            if vol_ratio < 0.7 and abs(price_change_pct) < 1.5:
-                status = "ĐANG TÍCH LŨY NỀN (CẠN CUNG)"
-                detail = f"Khối lượng cạn kiệt ở mức {vol_ratio:.2f}x MA20."
-            elif vol_ratio > 1.5 and price_change_pct > 1.5:
-                status = "SẴN SÀNG BREAKOUT (NỔ VOL)"
-                detail = f"Khối lượng bùng nổ đạt {vol_ratio:.2f}x MA20 kèm giá tăng."
-            elif closes[-1] > np.mean(closes[-20:]):
-                status = "ĐANG GOM HÀNG"
-                detail = "Dòng tiền duy trì ổn định trên MA20."
-
-        history_w1 = aggregate_candles(history_d1, 'W1')
-        history_mn = aggregate_candles(history_d1, 'MN')
-
-        symbol_history_data = {
-            "history_d1": history_d1,
-            "history_w1": history_w1,
-            "history_mn": history_mn
-        }
-        upsert_history(db, symbol, symbol_history_data)
-
-        reports = load_financial_reports(db, symbol)
-        bctc_history = parse_bctc_history(symbol, reports)
-        adv_metrics = extract_advanced_metrics_from_bctc(symbol, reports=reports)
-        old_data = stock_db.get(symbol, {})
-
-        current_time_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-        crawled_data = {
-            "symbol": symbol,
-            "company_name": company_overview["company_name"],
-            "market_cap": round(company_overview["market_cap"] / 1e9, 2),
-            "total_shares": int(company_overview["total_shares"]),
-            "close": int(close_price * 1000),
-            "volume": int(volume),
-            "pe": round(ratios.get("pe", 0), 2),
-            "pb": round(ratios.get("pb", 0), 2),
-            "eps": int(ratios.get("eps", 0)),
-            "roe": round(ratios.get("roe", 0) * 100, 1),
-            "roa": round(ratios.get("roa", 0) * 100, 1),
-            "dividend_yield": round(ratios.get("dividend_yield", 0) * 100, 2),
-            "cfo_latest": adv_metrics["cfo_latest"],
-            "cfo_ttm": adv_metrics["cfo_ttm"],
-            "debt_to_equity": adv_metrics["debt_to_equity"],
-            "liabilities_to_equity": adv_metrics["liabilities_to_equity"],
-            "gross_margin": adv_metrics["gross_margin"],
-            "net_profit_ttm": adv_metrics["net_profit_ttm"],
-            "recommendation": status,
-            "price_zone": detail,
-            "updated_at": current_time_str,
-            "bctc_history": bctc_history,
-        }
-
-        stock_db[symbol] = {**old_data, **crawled_data}
-        save_stock(db, symbol, stock_db[symbol])
-        time.sleep(1.5)
-
-    crawl_timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    save_last_update(db, {"last_update": crawl_timestamp})
-    print(f"✅ Đã ghi dữ liệu giá và metadata trực tiếp vào MongoDB: {crawl_timestamp}")
+    if successful_symbols:
+        crawl_timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        save_last_update(db, {
+            "last_update": crawl_timestamp,
+            "symbols_updated": len(successful_symbols),
+        })
+        print(f"✅ Đã ghi dữ liệu giá và metadata trực tiếp vào MongoDB: {crawl_timestamp}")
+    else:
+        print("⚠️ Không có mã nào được cập nhật; giữ nguyên metadata lần cập nhật trước.")
+    return successful_symbols
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """Authenticated read API for the Dautu web client."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import smtplib
@@ -292,8 +293,28 @@ def db_dependency() -> Database:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def startup() -> None:
+async def startup() -> None:
+    """Initialize Atlas and launch the price scheduler without blocking API requests."""
+    global _price_scheduler_task
     ensure_indexes()
+    if os.getenv("PRICE_SCHEDULER_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
+        from app.pipeline.scheduler import price_scheduler_loop
+        _price_scheduler_task = asyncio.create_task(
+            price_scheduler_loop(), name="dautu-price-scheduler"
+        )
+
+
+_price_scheduler_task: asyncio.Task | None = None
+
+
+async def shutdown() -> None:
+    """Stop the scheduler cleanly before closing the shared Atlas client."""
+    global _price_scheduler_task
+    task = _price_scheduler_task
+    _price_scheduler_task = None
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @router.get("/healthz")
@@ -430,4 +451,8 @@ def get_analysis(
 
 
 # Keep the public ASGI import path stable: app.api.main:app
-app = create_app(router=router, startup_handler=startup)
+app = create_app(
+    router=router,
+    startup_handler=startup,
+    shutdown_handler=shutdown,
+)

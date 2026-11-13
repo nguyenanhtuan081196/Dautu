@@ -2,7 +2,7 @@
 pandas
 numpy
 requests
-vnstock
+vnstock==6.0.0
 pymongo>=4.10,<5
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
