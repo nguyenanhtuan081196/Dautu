@@ -1,36 +1,15 @@
-"""Run the existing price crawler as an isolated Render Cron Job.
-
-The cron service has its own compute instance, so this workload never shares
-CPU or an asyncio event loop with the public FastAPI process. The wrapper adds
-MongoDB run auditing and jitter to the crawler's existing provider backoffs.
-"""
+"""Run the Atlas-backed price crawler as an isolated Render Cron Job."""
 from __future__ import annotations
 
 import argparse
 import json
-import random
-import sys
-import time
 from datetime import datetime, timezone
+from typing import Iterable
 from uuid import uuid4
-from typing import Callable, Iterable
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _jittered_sleep(
-    seconds: float,
-    *,
-    sleep_fn: Callable[[float], None] = time.sleep,
-    random_fn: Callable[[float, float], float] = random.uniform,
-) -> None:
-    """Apply +/-20% jitter to an existing provider backoff interval."""
-    delay = max(0.0, float(seconds))
-    if delay == 0:
-        return
-    sleep_fn(random_fn(delay * 0.8, delay * 1.2))
 
 
 def _normalize_symbols(symbols: Iterable[str]) -> list[str]:
@@ -42,7 +21,7 @@ def _normalize_symbols(symbols: Iterable[str]) -> list[str]:
 
 
 def run_price_job(*, symbols: list[str] | None = None, sessions: int = 30) -> dict:
-    """Run one crawler invocation and persist a per-symbol audit record."""
+    """Run one price sync and persist a complete audit record in Atlas."""
     import fetch_data_local as crawler
     from app.database.job_io import database
 
@@ -71,37 +50,18 @@ def run_price_job(*, symbols: list[str] | None = None, sessions: int = 30) -> di
         "sessions_requested": sessions,
     })
 
-    saved_symbols: list[str] = []
-    original_save_stock = crawler.save_stock
-    original_sleep = crawler.time.sleep
-    original_argv = sys.argv[:]
     error_message = None
-
-    def track_saved_stock(target_db, symbol, payload):
-        original_save_stock(target_db, symbol, payload)
-        saved_symbols.append(str(symbol).upper())
-
-    def polite_sleep(seconds):
-        _jittered_sleep(seconds, sleep_fn=original_sleep)
-
-    crawler.save_stock = track_saved_stock
-    crawler.time.sleep = polite_sleep
-    sys.argv = [
-        "fetch_data_local.py",
-        "--symbols", ",".join(target_symbols),
-        "--sessions", str(sessions),
-    ]
-
     try:
-        crawler.main()
-    except Exception as exc:  # Preserve the failure in MongoDB before exiting non-zero.
+        saved_symbols = crawler.main([
+            "--symbols", ",".join(target_symbols),
+            "--sessions", str(sessions),
+        ]) or []
+    except Exception as exc:
+        # Persist the exception in Atlas before returning a failed process status.
+        saved_symbols = []
         error_message = f"{type(exc).__name__}: {exc}"[:1000]
-    finally:
-        crawler.save_stock = original_save_stock
-        crawler.time.sleep = original_sleep
-        sys.argv = original_argv
 
-    saved = sorted(set(saved_symbols))
+    saved = sorted(set(_normalize_symbols(saved_symbols)) & set(target_symbols))
     failed = sorted(set(target_symbols) - set(saved))
     completed_at = _utc_now()
     status = "succeeded" if not failed and error_message is None else (
@@ -127,9 +87,6 @@ def run_price_job(*, symbols: list[str] | None = None, sessions: int = 30) -> di
         {"$set": {key: value for key, value in summary.items() if key != "run_id"}},
     )
     print(json.dumps(summary, ensure_ascii=False, default=str))
-
-    if status != "succeeded":
-        return summary
     return summary
 
 
