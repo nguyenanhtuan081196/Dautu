@@ -13,13 +13,13 @@ from typing import Any
 
 import firebase_admin
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
 
+from app.core.config import get_allowed_hosts, get_allowed_origins
 from app.database.mongo import ensure_indexes, get_database, ping_database
 from app.database.repositories import get_metadata
+from app.middleware import install_middleware
 
 app = FastAPI(
     title="Dautu API",
@@ -31,22 +31,13 @@ app = FastAPI(
 
 
 def _allowed_origins() -> list[str]:
-    raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
-    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    """Backward-compatible accessor used by the API compatibility tests."""
+    return get_allowed_origins()
 
 
 def _allowed_hosts() -> list[str]:
-    configured = [
-        host.strip()
-        for host in os.getenv("API_ALLOWED_HOSTS", "").split(",")
-        if host.strip()
-    ]
-    render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
-    if render_hostname:
-        configured.append(render_hostname)
-    # Local/test defaults only. Render supplies RENDER_EXTERNAL_HOSTNAME;
-    # custom domains must be added explicitly through API_ALLOWED_HOSTS.
-    return list(dict.fromkeys(configured or ["localhost", "127.0.0.1", "testserver"]))
+    """Backward-compatible accessor for the configured host allow-list."""
+    return get_allowed_hosts()
 
 
 RATE_LIMIT_WINDOW_SECONDS = 60
@@ -107,29 +98,7 @@ def _safe_projection(fields: tuple[str, ...]) -> dict[str, int]:
     return {"_id": 0, **{field: 1 for field in fields}}
 
 
-@app.middleware("http")
-async def security_headers(request, call_next):
-    response = await call_next(request)
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Cache-Control", "no-store")
-    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    return response
-
-
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts())
-
-origins = _allowed_origins()
-if origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
-    )
-
+install_middleware(app)
 
 _verification_send_state: dict[str, list[float]] = {}
 _verification_send_lock = threading.Lock()
