@@ -48,6 +48,19 @@ def get_client() -> MongoClient:
     )
 
 
+def close_client() -> None:
+    """Close the cached MongoDB client without creating a new connection."""
+    if not get_client.cache_info().currsize:
+        return
+    client = get_client()
+    try:
+        client.close()
+    finally:
+        # Clear the cache even if close raises, so a later app lifespan can
+        # create a fresh client instead of reusing a closed one.
+        get_client.cache_clear()
+
+
 def get_database() -> Database:
     database_name = os.getenv("MONGODB_DATABASE", "dautu").strip()
     if not database_name:
