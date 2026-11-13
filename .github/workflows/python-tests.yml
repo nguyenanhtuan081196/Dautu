@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test dependencies
-        run: python -m pip install pandas "pymongo>=4.10,<5" "fastapi>=0.115,<1" "firebase-admin>=6.5,<8"
+        run: python -m pip install pandas "pymongo>=4.10,<5" "fastapi>=0.115,<1" "firebase-admin>=6.5,<8" "server-platform @ git+https://github.com/nguyenanhtuan081196/server-platform.git@b928015c10a332fa783e76e9160db2e9336d6085"
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run unit tests
