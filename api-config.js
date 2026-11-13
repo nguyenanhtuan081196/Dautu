@@ -1,9 +1,6 @@
 /*
  * Public runtime configuration for the Dautu static frontend.
- * Set this to the HTTPS origin of the deployed FastAPI service, without a
- * trailing slash. This value is public and must never contain secrets.
- *
- * Example (replace with the real Render service URL after it is created):
- * window.DAUTU_API_BASE_URL = "https://<your-api-service>.onrender.com";
+ * This is a public API origin, not a secret. Keep it aligned with the
+ * production FastAPI service; never place credentials in this file.
  */
-window.DAUTU_API_BASE_URL = "";
+window.DAUTU_API_BASE_URL = window.DAUTU_API_BASE_URL || "https://dautu-api.onrender.com";

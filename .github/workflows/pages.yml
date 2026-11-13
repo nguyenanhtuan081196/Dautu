@@ -44,7 +44,7 @@ jobs:
           import os
           from urllib.parse import urlparse
 
-          api_url = os.environ.get("DAUTU_API_BASE_URL", "").strip().rstrip("/")
+          api_url = os.environ.get("DAUTU_API_BASE_URL", "").strip().rstrip("/") or "https://dautu-api.onrender.com"
           parsed = urlparse(api_url)
           if parsed.scheme != "https" or not parsed.netloc or parsed.path or parsed.query or parsed.fragment:
               raise SystemExit(
