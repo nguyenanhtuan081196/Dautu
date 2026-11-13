@@ -1,6 +1,7 @@
 ﻿import os
 import datetime
 import time
+import random
 import argparse
 from app.database.job_io import database, load_stocks, load_history, load_financial_reports, save_stock, save_last_update
 from app.database.repositories import upsert_history
@@ -233,7 +234,17 @@ def aggregate_candles(data, interval):
     return sorted(list(groups.values()), key=lambda x: x['time'])
 
 
-def fetch_history_with_fallback(symbol, start_date, end_date):
+def jittered_sleep(seconds, *, sleep_fn=None, random_fn=None):
+    """Sleep with +/-20% jitter to spread provider requests over time."""
+    delay = max(0.0, float(seconds))
+    if delay == 0:
+        return
+    sleeper = sleep_fn or time.sleep
+    randomizer = random_fn or random.uniform
+    sleeper(randomizer(delay * 0.8, delay * 1.2))
+
+
+def fetch_history_with_fallback(symbol, start_date, end_date, *, sleep_fn=None):
     """Fetch D1 candles using the supported vnstock v6 Market API.
 
     FHSC is the default source. A second source can be configured explicitly
@@ -260,8 +271,8 @@ def fetch_history_with_fallback(symbol, start_date, end_date):
                     f"⚠️ vnstock v6 Market/{source} lỗi cho {symbol} "
                     f"(lần {attempt + 1}/2): {exc}"
                 )
-                time.sleep(1)
-        time.sleep(0.5)
+                jittered_sleep(1, sleep_fn=sleep_fn)
+        jittered_sleep(0.5, sleep_fn=sleep_fn)
     return None
 
 
@@ -350,21 +361,31 @@ def parse_bctc_history(symbol, reports=None):
     return bctc_records
 
 
-def main():
+def main(argv=None, *, save_fn=None, sleep_fn=None):
+    """Refresh prices and upsert successful symbols directly into MongoDB Atlas.
+
+    Returns the symbols whose complete stock payload was successfully persisted.
+    """
     parser = argparse.ArgumentParser(description="Fetch prices and update MongoDB Atlas")
     parser.add_argument("--symbols", default=os.getenv("INPUT_SYMBOLS", ",".join(VN100_SYMBOLS)), help="Comma-separated symbols")
     parser.add_argument("--sessions", type=int, default=int(os.getenv("PRICE_SESSIONS", "30")), help="Number of daily sessions")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    save_fn = save_fn or save_stock
     target_symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     num_sessions = max(1, args.sessions)
     if not target_symbols:
         parser.error("At least one symbol is required")
+    primary_source = os.getenv("VNSTOCK_MARKET_SOURCE", "fhsc").strip().lower()
+    if primary_source == "fhsc" and not os.getenv("FHSC_API_KEY", "").strip():
+        raise RuntimeError("Missing required FHSC_API_KEY for VNstock source 'fhsc'")
+
     db = database()
     print(f"\n🚀 Bắt đầu cào dữ liệu cho {len(target_symbols)} mã (Lấy đúng {num_sessions} phiên giao dịch gần nhất)...")
 
     stock_db = load_stocks(db)
 
     total = len(target_symbols)
+    successful_symbols = []
     end_date = datetime.datetime.now().strftime("%Y-%m-%d")
     approx_days = max(num_sessions * 2, 365)
     start_date = (datetime.datetime.now() - datetime.timedelta(days=approx_days)).strftime("%Y-%m-%d")
@@ -376,7 +397,7 @@ def main():
         history_d1 = []
 
         try:
-            df = fetch_history_with_fallback(symbol, start_date, end_date)
+            df = fetch_history_with_fallback(symbol, start_date, end_date, sleep_fn=sleep_fn)
             if df is not None and not df.empty:
                 df = df.tail(num_sessions)
 
@@ -417,12 +438,12 @@ def main():
             continue
 
         company_overview = get_company_overview(symbol, close_price)
-        time.sleep(0.3)
+        jittered_sleep(0.3, sleep_fn=sleep_fn)
 
         ratios = {}
         for key, code in VNDIRECT_RATIOS.items():
             ratios[key] = get_vndirect_ratio(symbol, code)
-            time.sleep(0.2)
+            jittered_sleep(0.2, sleep_fn=sleep_fn)
 
         status = "ĐANG TÍCH LŨY NỀN"
         detail = "Đang siết nền tích lũy biên độ hẹp."
@@ -485,12 +506,14 @@ def main():
         }
 
         stock_db[symbol] = {**old_data, **crawled_data}
-        save_stock(db, symbol, stock_db[symbol])
-        time.sleep(1.5)
+        save_fn(db, symbol, stock_db[symbol])
+        successful_symbols.append(symbol)
+        jittered_sleep(1.5, sleep_fn=sleep_fn)
 
     crawl_timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     save_last_update(db, {"last_update": crawl_timestamp})
     print(f"✅ Đã ghi dữ liệu giá và metadata trực tiếp vào MongoDB: {crawl_timestamp}")
+    return successful_symbols
 
 
 if __name__ == "__main__":
