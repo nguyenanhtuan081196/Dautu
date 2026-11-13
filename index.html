@@ -215,7 +215,7 @@
                 </div>
                 <div>
                     <h1 class="text-base md:text-lg font-bold tracking-wide text-white">Pro Quant Screener</h1>
-                    <p class="text-[10px] text-slate-400">Hệ thống chấm điểm đặc thù theo Nhóm ngành | <span class="text-emerald-400 font-semibold"><i class="fa-regular fa-clock mr-1"></i>Cập nhật giá: 09/11/2026 18:25:05</span></p>
+                    <p class="text-[10px] text-slate-400">Hệ thống chấm điểm đặc thù theo Nhóm ngành | <span class="text-emerald-400 font-semibold"><i class="fa-regular fa-clock mr-1"></i>Cập nhật giá: <span id="price-update-time">Đang cập nhật...</span></span></p>
                 </div>
             </div>
 
@@ -1094,9 +1094,38 @@
             }
         }
 
+        async function loadPriceMetadata() {
+            const label = document.getElementById('price-update-time');
+            if (!label) return;
+            label.textContent = 'Đang cập nhật...';
+            try {
+                const metadata = await apiFetch('/api/metadata');
+                const rawTimestamp = metadata && metadata.last_updated;
+                if (!rawTimestamp) {
+                    label.textContent = 'Đang cập nhật...';
+                    return;
+                }
+                const parsedDate = new Date(rawTimestamp);
+                if (Number.isNaN(parsedDate.getTime())) {
+                    label.textContent = 'Đang cập nhật...';
+                    return;
+                }
+                label.textContent = parsedDate.toLocaleString('vi-VN', {
+                    timeZone: 'Asia/Ho_Chi_Minh',
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    hour12: false
+                });
+            } catch (error) {
+                console.warn('Không thể tải metadata cập nhật giá:', error);
+                label.textContent = 'Đang cập nhật...';
+            }
+        }
+
         async function loadData(showSpinner = false) {
             const icon = document.getElementById('refresh-icon');
             if (showSpinner && icon) icon.classList.add('spinner');
+            void loadPriceMetadata();
             try {
                 const [screenerData, stockData, simulationData] = await Promise.all([
                     apiFetch('/api/screener?limit=500'),
