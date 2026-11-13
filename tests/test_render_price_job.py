@@ -128,7 +128,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
             "successful_symbols": ["FPT"],
             "started_at": datetime.now(timezone.utc),
         }
-        get_db.return_value = SimpleNamespace(pipeline_runs=collection)
+        get_db.return_value = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
 
         def save_remaining(argv, *, on_symbol_saved):
             symbols = argv[1].split(",")
@@ -152,7 +152,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
     @patch("fetch_data_local.main")
     def test_late_batch_error_preserves_confirmed_atlas_symbol_writes(self, crawler_main, get_db):
         collection = FakeCollection()
-        get_db.return_value = SimpleNamespace(pipeline_runs=collection)
+        get_db.return_value = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
 
         def save_then_fail(argv, *, on_symbol_saved):
             on_symbol_saved("FPT")
@@ -175,7 +175,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
             "_id": "price_sync:2026-11-13",
             "status": "succeeded",
         }
-        get_db.return_value = SimpleNamespace(pipeline_runs=collection)
+        get_db.return_value = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
         from app.pipeline.price_job import run_price_job
 
         result = run_price_job(symbols=["FPT"], scheduled_for="2026-11-13")
