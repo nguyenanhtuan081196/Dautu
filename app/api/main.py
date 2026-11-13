@@ -12,22 +12,16 @@ from functools import lru_cache
 from typing import Any
 
 import firebase_admin
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
 from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
 
+from app.core.application import create_app
 from app.core.config import get_allowed_hosts, get_allowed_origins
 from app.database.mongo import ensure_indexes, get_database, ping_database
 from app.database.repositories import get_metadata
-from app.middleware import install_middleware
 
-app = FastAPI(
-    title="Dautu API",
-    version="1.0.0",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-)
+router = APIRouter()
 
 
 def _allowed_origins() -> list[str]:
@@ -97,8 +91,6 @@ AI_RESPONSE_FIELDS = (
 def _safe_projection(fields: tuple[str, ...]) -> dict[str, int]:
     return {"_id": 0, **{field: 1 for field in fields}}
 
-
-install_middleware(app)
 
 _verification_send_state: dict[str, list[float]] = {}
 _verification_send_lock = threading.Lock()
@@ -170,7 +162,7 @@ def _firebase_app():
         return firebase_admin.initialize_app(credentials.Certificate(service_account))
 
 
-@app.post("/api/auth/send-verification")
+@router.post("/api/auth/send-verification")
 def send_verification_email(authorization: str | None = Header(default=None)) -> dict[str, str]:
     """Generate a Firebase verification link and deliver it through Gmail SMTP.
 
@@ -300,7 +292,6 @@ def db_dependency() -> Database:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@app.on_event("startup")
 def startup() -> None:
     ensure_indexes()
 
@@ -436,3 +427,7 @@ def get_analysis(
     if not doc:
         raise HTTPException(status_code=404, detail="AI analysis not found")
     return doc
+
+
+# Keep the public ASGI import path stable: app.api.main:app
+app = create_app(router=router, startup_handler=startup)
