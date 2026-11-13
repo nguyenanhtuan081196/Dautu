@@ -114,7 +114,7 @@ class RenderPriceJobTests(unittest.TestCase):
         blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
         self.assertIn("type: cron", blueprint)
         self.assertIn("name: dautu-price-sync", blueprint)
-        self.assertIn('schedule: "30 13 * * 1-5"', blueprint)
+        self.assertIn('schedule: "30 12 * * 1-5"', blueprint)
         self.assertIn("region: singapore", blueprint)
         self.assertIn("plan: standard", blueprint)
         self.assertIn("python -m app.pipeline.price_job --sessions 30", blueprint)
