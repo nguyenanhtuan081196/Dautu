@@ -1,5 +1,5 @@
 """Tests for the Atlas-backed, memory-bounded Render Free price scheduler."""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -27,6 +27,26 @@ class FakeCollection:
         doc = self.documents.get(query.get("_id"))
         if doc:
             doc.update(update.get("$set", {}))
+
+    def find_one_and_update(self, query, update, return_document=None):
+        doc = self.documents.get(query.get("_id"))
+        if not doc:
+            return None
+        now = next(
+            (condition["lease_until"]["$lte"] for condition in query.get("$or", [])
+             if "lease_until" in condition and "$lte" in condition["lease_until"]),
+            None,
+        )
+        lease = doc.get("lease_until")
+        if lease is not None and lease.tzinfo is None:
+            lease = lease.replace(tzinfo=timezone.utc)
+        can_claim = doc.get("status") != "running" or (
+            now is not None and (lease is None or lease <= now)
+        ) or lease is None
+        if not can_claim:
+            return None
+        doc.update(update.get("$set", {}))
+        return doc
 
 
 class RenderFreePriceJobTests(unittest.TestCase):
