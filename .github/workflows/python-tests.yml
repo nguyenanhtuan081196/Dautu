@@ -19,27 +19,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Create read-only server-platform installation token
-        id: platform-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ vars.SERVER_PLATFORM_APP_CLIENT_ID }}
-          private-key: ${{ secrets.SERVER_PLATFORM_APP_PRIVATE_KEY }}
-          owner: nguyenanhtuan081196
-          repositories: server-platform
-          permission-contents: read
-      - name: Checkout pinned server-platform source
-        uses: actions/checkout@v4
-        with:
-          repository: nguyenanhtuan081196/server-platform
-          ref: b928015c10a332fa783e76e9160db2e9336d6085
-          token: ${{ steps.platform-token.outputs.token }}
-          path: .dependencies/server-platform
-          persist-credentials: false
-      - name: Install test dependencies
-        run: |
-          python -m pip install pandas "pymongo>=4.10,<5" "fastapi>=0.115,<1" "firebase-admin>=6.5,<8" "PyJWT[crypto]>=2.8,<3"
-          python -m pip install .dependencies/server-platform
+      - name: Install project dependencies
+        run: python -m pip install -r requirements.txt
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run unit tests
