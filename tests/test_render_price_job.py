@@ -25,6 +25,9 @@ class FakeCollection:
     def update_one(self, query, update):
         self.updated.append((query, update))
         doc = self.documents.get(query.get("_id"))
+        if doc is None and update.get("upsert"):
+            doc = {"_id": query.get("_id")}
+            self.documents[query.get("_id")] = doc
         if doc:
             doc.update(update.get("$set", {}))
 
@@ -88,7 +91,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
     @patch("fetch_data_local.main")
     def test_run_executes_five_symbol_batches_and_records_atlas_progress(self, crawler_main, get_db):
         collection = FakeCollection()
-        db = SimpleNamespace(pipeline_runs=collection)
+        db = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
         get_db.return_value = db
         def fake_crawler(argv, *, on_symbol_saved=None):
             symbols = argv[1].split(",")
@@ -110,6 +113,10 @@ class RenderFreePriceJobTests(unittest.TestCase):
         self.assertEqual(result["symbols_success"], 12)
         self.assertEqual([call.args[0][1].count(",") + 1 for call in crawler_main.call_args_list], [5, 5, 2])
         self.assertEqual(collection.documents["price_sync:2026-11-13"]["status"], "succeeded")
+        metadata = get_db.return_value.app_metadata.documents["price_sync"]
+        self.assertEqual(metadata["status"], "succeeded")
+        self.assertEqual(metadata["symbols_success"], 12)
+        self.assertIsNotNone(metadata["last_updated"])
 
     @patch("app.database.job_io.database")
     @patch("fetch_data_local.main")
