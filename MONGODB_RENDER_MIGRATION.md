@@ -45,7 +45,7 @@ Configure values in the Render service's environment settings. Never commit secr
 - MONGODB_DATABASE: dautu.
 - FIREBASE_SERVICE_ACCOUNT_JSON: Firebase Admin service-account JSON for the API service.
 - CORS_ALLOWED_ORIGINS: exact website origins.
-- FHSC_API_KEY: API key for VNstock's FHSC market source, required by the price Cron Job.
+- FHSC_API_KEY: API key for VNstock's FHSC market source, required by the in-process price scheduler.
 - ALIBABA_API_KEY: required later by the AI-analysis job.
 - MONGODB_SERVER_SELECTION_TIMEOUT_MS and MONGODB_CONNECT_TIMEOUT_MS: optional connection timeouts.
 
@@ -69,9 +69,9 @@ Render Free can restart at any time and has a 512 MB memory limit. The scheduler
 
 ## Pipeline rollout order
 
-The production pipeline will be migrated incrementally, with each stage isolated and tested:
+The production pipeline will be migrated incrementally, with each stage isolated and tested. Keep all stages on the existing Free web service unless a separate paid-cost approval is explicitly given:
 
-1. Price history and current stock metrics — Render Cron, implemented in this change.
+1. Price history and current stock metrics — Render Free in-process scheduler, implemented in this change.
 2. Quarterly financial reports — dedicated Render job, direct upserts to financial_reports.
 3. Quant screener — reads Atlas and writes screener_results.
 4. Historical simulation — reads price_history and writes simulations.
