@@ -37,11 +37,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      # This migration imports JSON using only the MongoDB repository layer.
-      # Do not install the full app requirements here: vnstock/pandas are not
-      # used by this script and can impose unrelated Python-version constraints.
+      # Install only the dependencies needed by the migration. The Dautu
+      # MongoDB adapter delegates URI validation to the shared platform package;
+      # avoid the full app requirements because vnstock/pandas are not used here.
       - name: Install migration dependencies
-        run: python -m pip install "pymongo>=4.10,<5"
+        run: |
+          python -m pip install "pymongo>=4.10,<5"
+          python -m pip install "server-platform @ git+https://github.com/nguyenanhtuan081196/server-platform.git@b928015c10a332fa783e76e9160db2e9336d6085"
 
       - name: Validate apply confirmation
         if: inputs.mode == 'apply'
