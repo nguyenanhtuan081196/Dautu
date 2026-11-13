@@ -39,6 +39,7 @@ def _chunks(values: list[str], size: int):
 
 def _claim_run(collection, run_id: str, scheduled_for: str | None, total: int, sessions: int) -> bool:
     """Claim/reclaim a durable run; an unexpired running lease blocks duplicates."""
+    from pymongo import ReturnDocument
     from pymongo.errors import DuplicateKeyError
 
     now = _utc_now()
@@ -46,14 +47,17 @@ def _claim_run(collection, run_id: str, scheduled_for: str | None, total: int, s
     if existing and existing.get("status") == "succeeded":
         return False
     if existing:
-        if existing.get("status") == "running":
-            lease_until = existing.get("lease_until")
-            if lease_until and _as_utc(lease_until) > now:
-                return False
-        # Reclaim failed/partial work or a stale running lease. Upserts are
-        # idempotent, so already completed symbols can safely be refreshed.
-        collection.update_one(
-            {"_id": run_id},
+        # Atomic compare-and-set: only one process can reclaim a partial/failed
+        # run or an expired lease. A live lease blocks a second scheduler.
+        claimed = collection.find_one_and_update(
+            {
+                "_id": run_id,
+                "$or": [
+                    {"status": {"$ne": "running"}},
+                    {"lease_until": {"$lte": now}},
+                    {"lease_until": {"$exists": False}},
+                ],
+            },
             {"$set": {
                 "status": "running",
                 "started_at": now,
@@ -61,8 +65,9 @@ def _claim_run(collection, run_id: str, scheduled_for: str | None, total: int, s
                 "recovered_after_restart": True,
                 "error": None,
             }},
+            return_document=ReturnDocument.AFTER,
         )
-        return True
+        return claimed is not None
 
     document = {
         "_id": run_id,
