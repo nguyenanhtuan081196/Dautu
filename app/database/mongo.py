@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pymongo import ASCENDING, MongoClient
 from pymongo.database import Database
+from server_platform.database.mongo import (
+    normalize_mongodb_uri as _platform_normalize_mongodb_uri,
+)
 
 
 def _required_env(name: str) -> str:
@@ -17,35 +19,8 @@ def _required_env(name: str) -> str:
 
 
 def normalize_mongodb_uri(uri: str) -> str:
-    """Validate and normalize a MongoDB URI without overriding explicit options.
-
-    Empty query parameters are removed because copied Atlas connection strings
-    can contain trailing ampersands. retryWrites defaults to true only when the
-    option is absent or explicitly blank; an explicit false is preserved.
-    """
-    parts = urlsplit(uri.strip())
-    if parts.scheme not in {"mongodb", "mongodb+srv"}:
-        raise ValueError("MONGODB_URI must start with mongodb:// or mongodb+srv://")
-    if not parts.netloc:
-        raise ValueError("MONGODB_URI must include a MongoDB host")
-
-    pairs = [
-        (key, value)
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
-        if key.strip()
-    ]
-    options = {key.lower(): index for index, (key, _) in enumerate(pairs)}
-    retry_index = options.get("retrywrites")
-    if retry_index is None:
-        pairs.append(("retryWrites", "true"))
-    else:
-        key, value = pairs[retry_index]
-        if not value.strip():
-            pairs[retry_index] = (key, "true")
-
-    return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urlencode(pairs), parts.fragment)
-    )
+    """Use the shared platform URI validator while preserving Dautu's API."""
+    return _platform_normalize_mongodb_uri(uri)
 
 
 # Backward-compatible private name used by existing migration tooling/tests.

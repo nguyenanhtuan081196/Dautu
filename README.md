@@ -98,3 +98,17 @@ The root `login.html` is a legacy URL that redirects to the canonical `index.htm
 ## Gửi email xác minh qua Gmail trên Render
 
 Hệ thống gửi email xác minh qua Gmail SMTP từ API Render. Cách tạo Google App Password, cấu hình biến môi trường và kiểm tra sau triển khai được hướng dẫn tại `docs/RENDER_GMAIL_SETUP.md`.
+
+## Shared server-platform dependency
+
+Dautu uses the reusable [server-platform](https://github.com/nguyenanhtuan081196/server-platform) Python package. The repository is public, so CI, Render and local development install it over HTTPS without deploy keys, PATs, GitHub Apps or private-key secrets.
+
+The dependency is pinned to immutable commit `b928015c10a332fa783e76e9160db2e9336d6085` in `requirements.txt`. Keep this pin unchanged unless deliberately upgrading the shared platform and validating the consuming application.
+
+Install all dependencies with:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Render uses the same dependency file in its build command; no platform-specific credentials or helper script are required.
