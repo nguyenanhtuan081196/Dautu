@@ -46,8 +46,10 @@ class PriceMetadataApiTests(unittest.TestCase):
             "symbols_failed": 0,
         })
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {
-            "last_updated": "2026-11-13T15:10:00Z",
+        payload = response.json()
+        returned_timestamp = datetime.fromisoformat(payload["last_updated"].replace("Z", "+00:00"))
+        self.assertEqual(returned_timestamp, timestamp)
+        self.assertEqual({key: value for key, value in payload.items() if key != "last_updated"}, {
             "status": "succeeded",
             "symbols_total": 99,
             "symbols_success": 99,
