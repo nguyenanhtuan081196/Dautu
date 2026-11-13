@@ -6,7 +6,7 @@ services:
     region: singapore
     plan: starter
     branch: main
-    schedule: "30 10 * * 1-5" # 17:30 Asia/Ho_Chi_Minh, weekdays (UTC schedule)
+    schedule: "30 15 * * 1-5" # 22:30 Asia/Ho_Chi_Minh, weekdays (UTC schedule)
     buildCommand: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
     startCommand: python -m app.pipeline.price_job --sessions 30
     envVars:
