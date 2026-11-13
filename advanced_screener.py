@@ -6,8 +6,6 @@ import pandas as pd
 import numpy as np
 import math
 
-OUTPUT_CSV = "screener_summary.csv"
-
 # Phân nhóm ngành chuẩn chi tiết cho VN100 (7 Nhóm ngành)
 SECTOR_MAPPING = {
     "NGAN_HANG": [
@@ -299,8 +297,7 @@ def main():
         print(f"✅ CI smoke test: tính được {len(results)} kết quả; không ghi dữ liệu.")
 
     df = pd.DataFrame(results)
-    # CSV remains an optional local diagnostic artifact; MongoDB is the source of truth.
-    df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")
+    # Operational screener results are stored only in MongoDB Atlas.
 
     industry_groups = {}
     for item in results:
