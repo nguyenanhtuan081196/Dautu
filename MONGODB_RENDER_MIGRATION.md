@@ -117,10 +117,10 @@ The root `render.yaml` defines:
 - Service: `dautu-price-sync` (Python, Singapore, Starter plan).
 - Schedule: `30 15 * * 1-5` UTC = 22:30 Vietnam time, Monday through Friday.
 - Command: `python -m app.pipeline.price_job --sessions 30`.
-- Required secret: `MONGODB_URI` (manual secret; never committed).
+- Required secrets: `MONGODB_URI` and `FHSC_API_KEY` (manual secrets; never committed).
 - Database: `dautu`.
 
-The wrapper invokes the existing `fetch_data_local.py` crawler, applies randomized
+The crawler uses the current vnstock v6 `Market("fhsc").equity(symbol).ohlcv(...)` interface. FHSC is the default source and requires the `FHSC_API_KEY` secret; an optional second source can be configured with `VNSTOCK_MARKET_FALLBACK_SOURCE` when its credentials are available. The wrapper invokes the existing `fetch_data_local.py` crawler, applies randomized
 20% jitter to its existing provider backoff delays, and writes a `pipeline_runs`
 record before and after each run. Each record includes status, start/end timestamps,
 duration, requested/successful/failed symbol counts, and failed symbol names. A
