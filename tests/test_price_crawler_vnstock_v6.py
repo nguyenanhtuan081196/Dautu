@@ -15,7 +15,7 @@ class VnstockV6PriceTests(unittest.TestCase):
         market.equity.return_value.ohlcv.return_value = frame
 
         with patch.object(crawler, "Market", return_value=market) as market_factory:
-            with patch.dict(os.environ, {"VNSTOCK_MARKET_SOURCE": "fhsc"}, clear=False):
+            with patch.dict(os.environ, {"VNSTOCK_MARKET_SOURCE": "fhsc", "VNSTOCK_MARKET_FALLBACK_SOURCE": ""}, clear=False):
                 result = crawler.fetch_history_with_fallback("FPT", "2026-10-01", "2026-11-13")
 
         self.assertIs(result, frame)
