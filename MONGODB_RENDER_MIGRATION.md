@@ -57,7 +57,7 @@ The first automated pipeline stage is a dedicated Render Cron Job, isolated from
 
 - Service name: dautu-price-sync.
 - Region: Singapore.
-- Plan: Starter (Render Cron Jobs require a paid plan).
+- Compute plan: Standard (1 CPU, 2 GB RAM) to give pandas/VNstock enough headroom.
 - Schedule: 30 13 * * 1-5 UTC = 20:30 Vietnam time, Monday-Friday.
 - Command: python -m app.pipeline.price_job --sessions 30.
 - Provider: VNstock v6 Market("fhsc").equity(symbol).ohlcv(...).
@@ -68,7 +68,7 @@ The job refreshes the configured VN100 universe, merges the latest daily candles
 
 Provider retry and inter-request waits use randomized +/-20% jitter. The job records a pipeline_runs document before and after execution, including requested/successful/failed symbol counts, symbol lists, duration, and error details. A partial or failed run exits non-zero.
 
-The Cron service is defined declaratively in render.yaml. Merging the code does not create the Render service automatically. Before enabling the schedule, create/sync the service in Render, add MONGODB_URI and FHSC_API_KEY as secrets, and verify the service configuration. The Starter plan has a separate cost; do not provision it without confirming the expected billing.
+The Cron service is defined declaratively in render.yaml. Merging the code does not create the Render service automatically. Before enabling the schedule, create/sync the service in Render, add MONGODB_URI and FHSC_API_KEY as secrets, and verify the service configuration. Render bills Cron compute by active minute; the current minimum charge is $1/month per Cron service. The Standard compute rate is usage-based, not a flat monthly Starter fee. Confirm the current estimate in the Render dashboard before provisioning.
 
 ## Pipeline rollout order
 
