@@ -70,7 +70,14 @@ class RenderFreePriceJobTests(unittest.TestCase):
         collection = FakeCollection()
         db = SimpleNamespace(pipeline_runs=collection)
         get_db.return_value = db
-        crawler_main.side_effect = lambda argv: argv[1].split(",")
+        def fake_crawler(argv, *, on_symbol_saved=None):
+            symbols = argv[1].split(",")
+            for symbol in symbols:
+                if on_symbol_saved:
+                    on_symbol_saved(symbol)
+            return symbols
+
+        crawler_main.side_effect = fake_crawler
         from app.pipeline.price_job import run_price_job
 
         result = run_price_job(
