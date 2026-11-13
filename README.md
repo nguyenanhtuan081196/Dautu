@@ -98,3 +98,45 @@ The root `login.html` is a legacy URL that redirects to the canonical `index.htm
 ## Gửi email xác minh qua Gmail trên Render
 
 Hệ thống gửi email xác minh qua Gmail SMTP từ API Render. Cách tạo Google App Password, cấu hình biến môi trường và kiểm tra sau triển khai được hướng dẫn tại `docs/RENDER_GMAIL_SETUP.md`.
+
+## Private server-platform dependency
+
+Dautu consumes the private `server-platform` repository at an immutable commit. Access is granted through a dedicated GitHub App, not a long-lived PAT or SSH private key.
+
+### One-time GitHub App setup
+
+- Create a GitHub App owned by the account that owns both repositories.
+- Set **Repository permissions → Contents: Read-only** (GitHub's required Metadata permission remains read-only).
+- Install the App on **Only select repositories**, selecting only `server-platform`.
+- Generate an App private key. Do not commit it or paste it into chat.
+- In Dautu → Settings → Secrets and variables → Actions:
+  - Repository variable `SERVER_PLATFORM_APP_CLIENT_ID`: the App's Client ID.
+  - Repository secret `SERVER_PLATFORM_APP_PRIVATE_KEY`: the generated private key.
+- The Python CI workflow requests a short-lived installation token scoped to the `server-platform` repository and checks out the pinned commit. The token is revoked by the action after the job.
+
+### Render build configuration
+
+Render's build environment must also be able to fetch the private package. After the GitHub App is created and installed, add these environment variables to the Dautu Render service (use **Save only**; do not trigger a deploy until the deployment change is approved):
+
+- `SERVER_PLATFORM_APP_ID`: numeric App ID.
+- `SERVER_PLATFORM_INSTALLATION_ID`: installation ID for the account installation.
+- `SERVER_PLATFORM_APP_PRIVATE_KEY`: the same private key.
+
+Set the Render Build Command to:
+
+```bash
+pip install -r requirements.txt && python scripts/install_server_platform.py
+```
+
+The build helper mints a short-lived, Contents-read-only installation token and uses Git's HTTP authorization header to install the pinned package without embedding credentials in the Git URL. Render exposes configured environment variables to build commands. Keep the private key only in Render's encrypted environment settings.
+
+### Local development
+
+For a developer account that has read access to `server-platform`, install GitHub CLI, run `gh auth setup-git`, then install the pinned dependency:
+
+```bash
+python -m pip install "server-platform @ git+https://github.com/nguyenanhtuan081196/server-platform.git@b928015c10a332fa783e76e9160db2e9336d6085"
+```
+
+Update the pinned commit in the workflow, build helper, and this section together when adopting a new platform release.
+
