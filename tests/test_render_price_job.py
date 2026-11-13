@@ -1,10 +1,13 @@
 """Tests for the isolated Render price-crawler entry point."""
-from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from app.pipeline.price_job import _jittered_sleep, _normalize_symbols, run_price_job
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeCollection:
