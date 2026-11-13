@@ -115,7 +115,7 @@ therefore does not consume the API process's event loop or request workers.
 
 The root `render.yaml` defines:
 - Service: `dautu-price-sync` (Python, Singapore, Starter plan).
-- Schedule: `30 15 * * 1-5` UTC = 22:30 Vietnam time, Monday through Friday.
+- Schedule: `30 13 * * 1-5` UTC = 20:30 Vietnam time (inside FHSC service hours), Monday through Friday.
 - Command: `python -m app.pipeline.price_job --sessions 30`.
 - Required secrets: `MONGODB_URI` and `FHSC_API_KEY` (manual secrets; never committed).
 - Database: `dautu`.
