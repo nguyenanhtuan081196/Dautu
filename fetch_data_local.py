@@ -3,9 +3,17 @@ import datetime
 import time
 import random
 import argparse
-from app.database.job_io import database, load_stocks, load_history, load_financial_reports, save_stock, save_last_update
+import gc
+from app.database.job_io import database, load_history, load_financial_reports, save_stock, save_last_update
 from app.database.repositories import upsert_history
 import numpy as np
+import pandas as pd
+
+# Avoid unnecessary pandas copies while processing one symbol at a time.
+try:
+    pd.options.mode.copy_on_write = True
+except (AttributeError, TypeError):
+    pass
 from financial_metrics import extract_advanced_metrics_from_bctc
 import requests
 from vnstock import Market
@@ -390,8 +398,6 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
     db = database()
     print(f"\n🚀 Bắt đầu cào dữ liệu cho {len(target_symbols)} mã (Lấy đúng {num_sessions} phiên giao dịch gần nhất)...")
 
-    stock_db = load_stocks(db)
-
     total = len(target_symbols)
     successful_symbols = []
     now_vn = datetime.datetime.now(VN_TZ)
@@ -409,7 +415,8 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
             try:
                 df = fetch_history_with_fallback(symbol, start_date, end_date, sleep_fn=sleep_fn)
                 if df is not None and not df.empty:
-                    df = df.tail(num_sessions)
+                    # Copy only the requested tail so the provider's larger frame can be released.
+                    df = df.tail(num_sessions).copy()
 
                     closes = df['close'].tolist()
                     volumes = df['volume'].tolist()
@@ -486,7 +493,8 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
             reports = load_financial_reports(db, symbol)
             bctc_history = parse_bctc_history(symbol, reports)
             adv_metrics = extract_advanced_metrics_from_bctc(symbol, reports=reports)
-            old_data = stock_db.get(symbol, {})
+            old_document = db.stocks.find_one({"_id": symbol}) or {}
+            old_data = {key: value for key, value in old_document.items() if key != "_id"}
 
             current_time_str = datetime.datetime.now(VN_TZ).strftime("%d/%m/%Y %H:%M:%S")
 
@@ -515,8 +523,9 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
                 "bctc_history": bctc_history,
             }
 
-            stock_db[symbol] = {**old_data, **crawled_data}
-            save_fn(db, symbol, stock_db[symbol])
+            stock_payload = {**old_data, **crawled_data}
+            save_fn(db, symbol, stock_payload)
+            del stock_payload
             successful_symbols.append(symbol)
             if on_symbol_saved is not None:
                 on_symbol_saved(symbol)
@@ -525,6 +534,14 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
         except Exception as exc:
             print(f"❌ Lỗi xử lý {symbol}: {type(exc).__name__}: {exc}")
             continue
+        finally:
+            # Drop per-symbol pandas/provider objects before moving to the next ticker.
+            if "df" in locals():
+                del df
+            for temporary_name in ("new_history_d1", "existing_history_d1", "merged_dict", "history_d1", "history_w1", "history_mn", "symbol_history_data", "reports", "bctc_history", "adv_metrics", "old_document", "old_data", "crawled_data", "closes", "volumes"):
+                if temporary_name in locals():
+                    del locals()[temporary_name]
+            gc.collect()
 
     if successful_symbols:
         crawl_timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
