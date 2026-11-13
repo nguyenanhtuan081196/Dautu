@@ -584,7 +584,10 @@
                     user = auth.currentUser;
                     if (!user) throw new Error('Phiên đăng nhập không còn hợp lệ.');
                     await user.getIdToken(true);
-                    if (!user.emailVerified) {
+                    const emailKey = (user.email || '').trim().toLowerCase();
+                    const isAdminEmail = emailKey === 'nguyenanhtuan081196@gmail.com';
+                    // Only the designated Admin identity may bypass email verification.
+                    if (!user.emailVerified && !isAdminEmail) {
                         authOverlay.classList.remove('hidden');
                         expiredModal.classList.add('hidden');
                         const authError = document.getElementById('login-error');
@@ -594,12 +597,15 @@
                         }
                         return;
                     }
-                    const emailKey = (user.email || '').trim().toLowerCase();
                     const userDocRef = db.collection('allowed_users').doc(emailKey);
                     const doc = await userDocRef.get();
 
                     let userData = {};
                     if (!doc.exists) {
+                        // Never create a normal User profile for the fixed Admin identity.
+                        if (isAdminEmail) {
+                            throw new Error('Thiếu hồ sơ Admin trong allowed_users. Cần khôi phục document nguyenanhtuan081196@gmail.com với role=admin.');
+                        }
                         const expireDate = new Date();
                         expireDate.setDate(expireDate.getDate() + 7);
                         userData = {
@@ -611,6 +617,11 @@
                         await userDocRef.set(userData);
                     } else {
                         userData = doc.data();
+                    }
+
+                    // Do not silently treat the fixed Admin identity as a normal User.
+                    if (isAdminEmail && userData.role !== 'admin') {
+                        throw new Error('Hồ sơ Admin không hợp lệ: tài khoản này phải có role=admin.');
                     }
 
                     const now = new Date();
