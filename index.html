@@ -11,7 +11,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
-    <script src="./api-config.js"></script>
+    <script src="./api-config.js?v=20261113"></script>
 
     <script src="./lightweight-charts.js"></script>
 
@@ -549,7 +549,7 @@
         }
         const auth = firebase.auth();
         const db = firebase.firestore();
-        const API_BASE_URL = String(window.DAUTU_API_BASE_URL || '').trim().replace(/\/+$/, '');
+        const API_BASE_URL = String(window.DAUTU_API_BASE_URL || 'https://dautu-api.onrender.com').trim().replace(/\/+$/, '');
 
         async function apiFetch(path) {
             if (!API_BASE_URL) {
