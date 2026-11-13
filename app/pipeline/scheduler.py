@@ -55,6 +55,7 @@ async def price_scheduler_loop() -> None:
     """Poll gently; dispatch blocking VNstock/pandas work to a background thread."""
     attempted_dates: set[str] = set()
     while True:
+        # Let FastAPI finish startup and begin serving requests before any Atlas polling.
         scheduled_for = None
         try:
             due_date = latest_due_weekday()
