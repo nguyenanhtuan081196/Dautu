@@ -85,11 +85,21 @@ class RenderFreePriceJobTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, source)
 
+    def test_crawler_reads_one_stock_document_and_releases_memory(self):
+        source = (ROOT / "fetch_data_local.py").read_text(encoding="utf-8-sig")
+        self.assertIn('db.stocks.find_one({"_id": symbol})', source)
+        self.assertNotIn("load_stocks(db)", source)
+        self.assertIn("gc.collect()", source)
+        self.assertIn("copy_on_write = True", source)
+        self.assertIn('os.environ[_thread_env] = "1"', source)
+
     def test_free_architecture_has_no_paid_cron_blueprint(self):
         self.assertFalse((ROOT / "render.yaml").exists())
         source = (ROOT / "app/api/main.py").read_text(encoding="utf-8")
         self.assertIn("asyncio.create_task", source)
         self.assertIn("price_scheduler_loop", source)
+        scheduler = (ROOT / "app/pipeline/scheduler.py").read_text(encoding="utf-8")
+        self.assertIn("asyncio.to_thread", scheduler)
 
 
 if __name__ == "__main__":
