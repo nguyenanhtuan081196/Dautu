@@ -17,6 +17,13 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Normalize PyMongo's default naive UTC datetimes for safe comparisons."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _normalize_symbols(symbols: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(
         str(symbol).strip().upper()
@@ -41,7 +48,7 @@ def _claim_run(collection, run_id: str, scheduled_for: str | None, total: int, s
     if existing:
         if existing.get("status") == "running":
             lease_until = existing.get("lease_until")
-            if lease_until and lease_until > now:
+            if lease_until and _as_utc(lease_until) > now:
                 return False
         # Reclaim failed/partial work or a stale running lease. Upserts are
         # idempotent, so already completed symbols can safely be refreshed.
@@ -141,7 +148,7 @@ def run_price_job(
             "status": status,
             "completed_at": completed_at,
             "lease_until": completed_at,
-            "duration_seconds": round((completed_at - (db.pipeline_runs.find_one({"_id": run_id}) or {}).get("started_at", completed_at)).total_seconds(), 2),
+            "duration_seconds": round((completed_at - _as_utc((db.pipeline_runs.find_one({"_id": run_id}) or {}).get("started_at", completed_at))).total_seconds(), 2),
             "symbols_total": len(target_symbols),
             "symbols_success": len(saved),
             "symbols_failed": len(failed),
