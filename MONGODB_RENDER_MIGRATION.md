@@ -105,3 +105,27 @@ This foundation deliberately does not change the existing GitHub Actions writers
 4. A single Render pipeline has passed a full end-to-end test.
 
 Keep the current JSON files as a rollback snapshot until the new pipeline has run successfully more than once.
+
+
+## Render price-crawler Cron Job
+
+The first Render pipeline stage is deployed as a dedicated **Cron Job**, not as work
+inside the FastAPI web process. It runs independently from the API instance and
+therefore does not consume the API process's event loop or request workers.
+
+The root `render.yaml` defines:
+- Service: `dautu-price-sync` (Python, Singapore, Starter plan).
+- Schedule: `30 10 * * 1-5` UTC = 17:30 Vietnam time, Monday through Friday.
+- Command: `python -m app.pipeline.price_job --sessions 30`.
+- Required secret: `MONGODB_URI` (manual secret; never committed).
+- Database: `dautu`.
+
+The wrapper invokes the existing `fetch_data_local.py` crawler, applies randomized
+20% jitter to its existing provider backoff delays, and writes a `pipeline_runs`
+record before and after each run. Each record includes status, start/end timestamps,
+duration, requested/successful/failed symbol counts, and failed symbol names. A
+partial or failed run exits non-zero so Render marks that invocation as failed.
+
+The Cron service must be created/synced in Render after this code is reviewed and
+merged. The Blueprint is declarative configuration only; adding `render.yaml` to
+GitHub does not create or start the service by itself.
