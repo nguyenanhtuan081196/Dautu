@@ -121,19 +121,25 @@ def run_price_job(
         }
 
     saved_symbols: list[str] = []
-    error_message = None
+    batch_errors: list[str] = []
+
+    def record_saved_symbol(symbol: str) -> None:
+        saved_symbols.append(str(symbol).strip().upper())
+
     try:
         for batch_number, batch in enumerate(_chunks(target_symbols, bounded_batch), start=1):
             logger_prefix = f"[batch {batch_number}]"
             print(f"{logger_prefix} Processing {len(batch)} symbols; memory is released after this batch.")
             try:
                 returned = crawler.main(
-                    ["--symbols", ",".join(batch), "--sessions", str(sessions)]
+                    ["--symbols", ",".join(batch), "--sessions", str(sessions)],
+                    on_symbol_saved=record_saved_symbol,
                 ) or []
                 saved_symbols.extend(_normalize_symbols(returned))
             except Exception as exc:
-                error_message = f"{type(exc).__name__}: {exc}"[:1000]
-                print(f"{logger_prefix} Batch failed: {error_message}")
+                batch_error = f"{type(exc).__name__}: {exc}"[:500]
+                batch_errors.append(batch_error)
+                print(f"{logger_prefix} Batch failed: {batch_error}")
             finally:
                 gc.collect()
             # Continue with later batches after an isolated batch failure.
@@ -141,6 +147,7 @@ def run_price_job(
         saved = sorted(set(saved_symbols) & set(target_symbols))
         failed = sorted(set(target_symbols) - set(saved))
         completed_at = _utc_now()
+        error_message = "; ".join(batch_errors)[:1000] or None
         status = "succeeded" if not failed and error_message is None else (
             "partial" if saved else "failed"
         )
