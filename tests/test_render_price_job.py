@@ -1,10 +1,10 @@
-"""Tests for the isolated Render price-crawler entry point."""
+"""Tests for the Atlas-only Render price-crawler entry point."""
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app.pipeline.price_job import _jittered_sleep, _normalize_symbols, run_price_job
+from app.pipeline.price_job import _normalize_symbols, run_price_job
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,49 +33,31 @@ class RenderPriceJobTests(unittest.TestCase):
             ["FPT", "MWG"],
         )
 
-    def test_jittered_sleep_uses_randomized_backoff_bounds(self):
-        sleeper = Mock()
-        randomizer = Mock(return_value=1.1)
-        _jittered_sleep(1.0, sleep_fn=sleeper, random_fn=randomizer)
-        randomizer.assert_called_once_with(0.8, 1.2)
-        sleeper.assert_called_once_with(1.1)
-
     @patch("app.database.job_io.database")
     @patch("fetch_data_local.main")
     def test_successful_run_records_per_symbol_counts(self, crawler_main, get_db):
-        import fetch_data_local as crawler
         get_db.return_value = self.db
-        original_save = crawler.save_stock
-        crawler.save_stock = Mock()
+        crawler_main.return_value = ["FPT", "MWG"]
 
-        def simulate_crawler():
-            crawler.save_stock(self.db, "FPT", {"symbol": "FPT"})
-            crawler.save_stock(self.db, "MWG", {"symbol": "MWG"})
-
-        crawler_main.side_effect = simulate_crawler
-        try:
-            result = run_price_job(symbols=["FPT", "MWG"], sessions=30)
-        finally:
-            crawler.save_stock = original_save
+        result = run_price_job(symbols=["FPT", "MWG"], sessions=30)
 
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(result["symbols_success"], 2)
         self.assertEqual(result["symbols_failed"], 0)
         self.assertEqual(self.pipeline_runs.inserted[0]["status"], "running")
-        self.assertEqual(self.pipeline_runs.updated[0][1]["$set"]["status"], "succeeded")
+        self.assertEqual(
+            self.pipeline_runs.updated[0][1]["$set"]["status"], "succeeded"
+        )
+        crawler_main.assert_called_once_with([
+            "--symbols", "FPT,MWG", "--sessions", "30"
+        ])
 
     @patch("app.database.job_io.database")
-    @patch("fetch_data_local.main")
+    @patch("fetch_data_local.main", return_value=["FPT"])
     def test_partial_run_marks_missing_symbols_failed(self, crawler_main, get_db):
-        import fetch_data_local as crawler
         get_db.return_value = self.db
-        original_save = crawler.save_stock
-        crawler.save_stock = Mock()
-        crawler_main.side_effect = lambda: crawler.save_stock(self.db, "FPT", {})
-        try:
-            result = run_price_job(symbols=["FPT", "MWG"], sessions=30)
-        finally:
-            crawler.save_stock = original_save
+
+        result = run_price_job(symbols=["FPT", "MWG"], sessions=30)
 
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["successful_symbols"], ["FPT"])
@@ -86,11 +68,29 @@ class RenderPriceJobTests(unittest.TestCase):
     @patch("fetch_data_local.main", side_effect=RuntimeError("provider unavailable"))
     def test_fatal_run_is_logged_before_returning_failure(self, crawler_main, get_db):
         get_db.return_value = self.db
+
         result = run_price_job(symbols=["FPT"], sessions=30)
+
         self.assertEqual(result["status"], "failed")
         self.assertIn("provider unavailable", result["error"])
         self.assertEqual(self.pipeline_runs.updated[0][1]["$set"]["status"], "failed")
 
+    def test_price_crawler_jitters_every_sleep_without_global_monkeypatching(self):
+        import fetch_data_local as crawler
+
+        sleeper = Mock()
+        randomizer = Mock(return_value=1.1)
+        crawler.jittered_sleep(1.0, sleep_fn=sleeper, random_fn=randomizer)
+
+        randomizer.assert_called_once_with(0.8, 1.2)
+        sleeper.assert_called_once_with(1.1)
+
+    def test_price_crawler_has_no_local_dataset_file_writes(self):
+        source = (ROOT / "fetch_data_local.py").read_text(encoding="utf-8-sig")
+        forbidden = ("json.dump(", "to_json(", "write_text(", "write_bytes(", "open(")
+        for marker in forbidden:
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, source)
 
     def test_render_blueprint_runs_price_sync_on_isolated_weekday_cron(self):
         blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
