@@ -113,6 +113,36 @@ class RenderFreePriceJobTests(unittest.TestCase):
 
     @patch("app.database.job_io.database")
     @patch("fetch_data_local.main")
+    def test_restart_resumes_only_symbols_not_already_persisted_in_atlas(self, crawler_main, get_db):
+        collection = FakeCollection()
+        collection.documents["price_sync:2026-11-13"] = {
+            "_id": "price_sync:2026-11-13",
+            "status": "partial",
+            "successful_symbols": ["FPT"],
+            "started_at": datetime.now(timezone.utc),
+        }
+        get_db.return_value = SimpleNamespace(pipeline_runs=collection)
+
+        def save_remaining(argv, *, on_symbol_saved):
+            symbols = argv[1].split(",")
+            for symbol in symbols:
+                on_symbol_saved(symbol)
+            return symbols
+
+        crawler_main.side_effect = save_remaining
+        from app.pipeline.price_job import run_price_job
+
+        result = run_price_job(
+            symbols=["FPT", "MWG"],
+            batch_size=5,
+            scheduled_for="2026-11-13",
+        )
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["successful_symbols"], ["FPT", "MWG"])
+        self.assertEqual(crawler_main.call_args.args[0][1], "MWG")
+
+    @patch("app.database.job_io.database")
+    @patch("fetch_data_local.main")
     def test_late_batch_error_preserves_confirmed_atlas_symbol_writes(self, crawler_main, get_db):
         collection = FakeCollection()
         get_db.return_value = SimpleNamespace(pipeline_runs=collection)
