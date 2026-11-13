@@ -17,7 +17,8 @@ import pandas as pd
 # Avoid unnecessary pandas copies while processing one symbol at a time.
 try:
     pd.options.mode.copy_on_write = True
-except (AttributeError, TypeError):
+except Exception:
+    # pandas versions may differ; the bounded batch strategy remains the primary guard.
     pass
 from financial_metrics import extract_advanced_metrics_from_bctc
 import requests
