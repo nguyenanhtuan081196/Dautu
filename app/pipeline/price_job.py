@@ -51,17 +51,25 @@ def run_price_job(*, symbols: list[str] | None = None, sessions: int = 30) -> di
     })
 
     error_message = None
+    observed_saved_symbols: list[str] = []
+
+    def record_saved_symbol(symbol: str) -> None:
+        observed_saved_symbols.append(str(symbol).strip().upper())
+
     try:
-        saved_symbols = crawler.main([
-            "--symbols", ",".join(target_symbols),
-            "--sessions", str(sessions),
-        ]) or []
+        returned_symbols = crawler.main(
+            [
+                "--symbols", ",".join(target_symbols),
+                "--sessions", str(sessions),
+            ],
+            on_symbol_saved=record_saved_symbol,
+        ) or []
+        observed_saved_symbols.extend(_normalize_symbols(returned_symbols))
     except Exception as exc:
-        # Persist the exception in Atlas before returning a failed process status.
-        saved_symbols = []
+        # Keep already confirmed per-symbol Atlas writes even if a later step fails.
         error_message = f"{type(exc).__name__}: {exc}"[:1000]
 
-    saved = sorted(set(_normalize_symbols(saved_symbols)) & set(target_symbols))
+    saved = sorted(set(_normalize_symbols(observed_saved_symbols)) & set(target_symbols))
     failed = sorted(set(target_symbols) - set(saved))
     completed_at = _utc_now()
     status = "succeeded" if not failed and error_message is None else (
