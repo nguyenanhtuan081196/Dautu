@@ -538,9 +538,13 @@ def main(argv=None, *, save_fn=None, sleep_fn=None, on_symbol_saved=None):
             # Drop per-symbol pandas/provider objects before moving to the next ticker.
             if "df" in locals():
                 del df
-            for temporary_name in ("new_history_d1", "existing_history_d1", "merged_dict", "history_d1", "history_w1", "history_mn", "symbol_history_data", "reports", "bctc_history", "adv_metrics", "old_document", "old_data", "crawled_data", "closes", "volumes"):
-                if temporary_name in locals():
-                    del locals()[temporary_name]
+            df = None
+            closes = volumes = history_d1 = []
+            new_history_d1 = existing_history_d1 = []
+            merged_dict = None
+            history_w1 = history_mn = None
+            symbol_history_data = reports = bctc_history = None
+            adv_metrics = old_document = old_data = crawled_data = None
             gc.collect()
 
     if successful_symbols:
