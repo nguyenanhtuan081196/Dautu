@@ -11,10 +11,10 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from firebase_admin import firestore
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from pymongo.database import Database
 
-from app.api.main import ADMIN_EMAIL, _firebase_app, db_dependency, require_admin
+from app.api.main import _firebase_app, db_dependency, require_admin
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -114,6 +114,11 @@ def update_user(
         if admin_count <= 1:
             raise HTTPException(status_code=409, detail="The last active Admin cannot be demoted")
 
+    if changes.get("status") == "locked" and target.get("role") == "admin":
+        admin_count = db.users.count_documents({"role": "admin", "status": {"$ne": "locked"}})
+        if admin_count <= 1:
+            raise HTTPException(status_code=409, detail="The last active Admin cannot be locked")
+
     if "expired_at" in changes:
         expiry = changes["expired_at"]
         if expiry is None:
@@ -143,8 +148,14 @@ def update_user(
                 detail="Firestore synchronization failed; MongoDB account state was not changed",
             ) from exc
 
-    db.users.update_one({"email": normalized_email}, {"$set": changes})
-    updated = db.users.find_one({"email": normalized_email}, {"_id": 0})
+    try:
+        db.users.update_one({"email": normalized_email}, {"$set": changes})
+        updated = db.users.find_one({"email": normalized_email}, {"_id": 0})
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Firestore was updated but MongoDB synchronization failed; reconcile this account",
+        ) from exc
     return {
         "email": updated.get("email"),
         "role": updated.get("role"),
