@@ -85,3 +85,5 @@ def ensure_indexes(db: Database | None = None) -> None:
     db.app_metadata.create_index([("key", ASCENDING)], unique=True)
     db.realtime_prices.create_index([("symbol", ASCENDING)], unique=True)
     db.realtime_prices.create_index([("updated_at", ASCENDING)])
+    db.users.create_index([("email", ASCENDING)], unique=True)
+    db.users.create_index([("role", ASCENDING), ("status", ASCENDING)])
