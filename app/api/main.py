@@ -306,7 +306,7 @@ def metadata_db_dependency() -> Database | None:
 
 async def startup() -> None:
     """Initialize Atlas and launch the price scheduler without blocking API requests."""
-    global _price_scheduler_task
+    global _price_scheduler_task, _realtime_collector_task
     ensure_indexes()
     if os.getenv("PRICE_SCHEDULER_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
         from app.pipeline.scheduler import price_scheduler_loop
@@ -315,7 +315,6 @@ async def startup() -> None:
         )
     if os.getenv("ENABLE_REALTIME_CRAWLER", "false").strip().lower() in {"1", "true", "yes", "on"}:
         from app.pipeline.realtime_collector import realtime_collector_loop
-        global _realtime_collector_task
         _realtime_collector_task = asyncio.create_task(
             realtime_collector_loop(), name="dautu-ssi-realtime-collector"
         )
