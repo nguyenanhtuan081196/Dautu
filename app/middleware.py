@@ -31,9 +31,10 @@ def install_middleware(app: FastAPI) -> None:
             CORSMiddleware,
             allow_origins=origins,
             allow_credentials=False,
-            # Keep the existing Dautu API contract; do not broaden permissions.
+            # Authorization triggers a preflight. Cache-Control is also sent by
+            # the frontend for no-cache GETs and must be explicitly permitted.
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type"],
+            allow_headers=["Authorization", "Content-Type", "Cache-Control"],
         )
 
     app.middleware("http")(security_headers)
