@@ -176,7 +176,7 @@ def _finalize_daily_candles(trading_day: date) -> int:
     return count
 
 
-async def _run_stream_session() -> None:
+async def _run_stream_session(on_connected=None) -> None:
     """Connect once, subscribe in bounded symbol groups, and process pushed ticks."""
     from ssi_sdk import AsyncAuth, AsyncStream, Config
 
@@ -192,10 +192,19 @@ async def _run_stream_session() -> None:
         await asyncio.sleep(60)
         return
 
-    config = Config(client_id=client_id, api_key=api_key, api_secret=api_secret)
+    # Explicitly pin the SDK's documented market-data reconnect behaviour.
+    # Stream auto-reconnects with jittered exponential backoff and restores
+    # subscriptions; the outer loop handles terminal failures / fresh sessions.
+    config = Config(
+        client_id=client_id,
+        api_key=api_key,
+        api_secret=api_secret,
+        auto_reconnect=True,
+    )
     queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
+    reconnect_failed = asyncio.Event()
 
     def on_market_data(message: Any) -> None:
         item = normalize_trade(message)
@@ -214,37 +223,56 @@ async def _run_stream_session() -> None:
         loop.call_soon_threadsafe(enqueue)
 
     async with AsyncAuth(config) as auth:
-        # SSI documents market-data authentication without OTP; do not request
-        # trading permissions or configure order/trading callbacks.
+        # SSI SDK v3 market-data streaming uses the Market Data scope; no
+        # trading OTP, private key, or trading callbacks are configured.
         await auth.authenticate()
         async with AsyncStream(auth) as stream:
+            def on_connection(event: Any) -> None:
+                state = str(getattr(event, "state", "")).lower()
+                reconnect_count = getattr(event, "reconnect_count", 0)
+                error = getattr(event, "error", None)
+                logger.info(
+                    "SSI WebSocket state=%s reconnect_count=%s error=%s",
+                    state, reconnect_count, error,
+                )
+                if state == "failed":
+                    loop.call_soon_threadsafe(reconnect_failed.set)
+
+            # Register callbacks BEFORE connect so the initial connection
+            # event is not missed.
             stream.streaming.on_data = on_market_data
+            stream.streaming.on_connection = on_connection
             await stream.streaming.connect()
             for group in chunks(symbols, SSI_STREAM_BATCH_SIZE):
                 await stream.streaming.subscribe_symbol_trade(group)
-            logger.info("SSI realtime stream connected; subscribed=%s batch_size=%s", len(symbols), SSI_STREAM_BATCH_SIZE)
+            logger.info(
+                "SSI realtime stream connected; subscribed=%s batch_size=%s auto_reconnect=%s",
+                len(symbols), SSI_STREAM_BATCH_SIZE, config.auto_reconnect,
+            )
 
-            flush_task = asyncio.create_task(_flush_worker(queue, stop), name="ssi-realtime-flush")
+            if on_connected is not None:\n                on_connected()\n            flush_task = asyncio.create_task(_flush_worker(queue, stop), name="ssi-realtime-flush")
             try:
-                while is_market_window():
-                    # SDK wait yields control after a bounded interval so market
-                    # hours and shutdown are re-evaluated regularly.
+                while is_market_window() and not reconnect_failed.is_set():
                     await stream.streaming.wait(timeout_ms=5000)
+                if reconnect_failed.is_set():
+                    raise RuntimeError("SSI SDK reported terminal WebSocket reconnect failure")
             finally:
                 stop.set()
                 await flush_task
 
 
 async def realtime_collector_loop() -> None:
-    """Opt-in market-hours loop with bounded reconnect backoff and daily close."""
+    """Opt-in market-hours loop with SDK reconnect plus outer bounded backoff."""
     retry_seconds = 5
     finalized_days: set[str] = set()
     while True:
         now = datetime.now(VN_TZ)
         try:
             if is_market_window(now):
-                retry_seconds = 5
+                # Successful connect resets the outer retry budget inside the
+                # session; failed initial connects retain/increase the backoff.
                 await _run_stream_session()
+                retry_seconds = 5
                 await asyncio.sleep(2)
                 continue
 
