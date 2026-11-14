@@ -655,20 +655,64 @@
         async function sendVerificationEmail() {
             const user = auth.currentUser;
             if (!user) {
+                console.warn('[Dautu Auth] Resend verification stopped: no current Firebase user.');
                 alert('Hãy đăng nhập trước, sau đó gửi lại email xác minh.');
                 return;
             }
+
+            let stage = 'starting';
             try {
+                if (!API_BASE_URL) throw new Error('API_BASE_URL chưa được cấu hình.');
+                console.info('[Dautu Auth] Resend verification started.', {
+                    stage,
+                    apiBase: API_BASE_URL,
+                    uidPresent: Boolean(user.uid),
+                    emailPresent: Boolean(user.email)
+                });
+
+                stage = 'refreshing-firebase-token';
                 const token = await user.getIdToken(true);
+                if (!token) throw new Error('Firebase không trả về ID token.');
+                console.info('[Dautu Auth] Firebase ID token acquired; preparing POST.');
+
+                stage = 'sending-post';
                 const response = await fetch(API_BASE_URL + '/api/auth/send-verification', {
                     method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Accept': 'application/json'
+                    },
+                    cache: 'no-store'
                 });
+                console.info('[Dautu Auth] Verification POST response received.', {
+                    status: response.status,
+                    ok: response.ok
+                });
+
+                stage = 'reading-response';
                 const payload = await response.json().catch(() => ({}));
-                if (!response.ok) throw new Error(payload.detail || 'Không thể gửi email xác minh.');
+                if (!response.ok) {
+                    const error = new Error(payload.detail || 'Không thể gửi email xác minh (HTTP ' + response.status + ').');
+                    error.httpStatus = response.status;
+                    throw error;
+                }
+                console.info('[Dautu Auth] Verification email request succeeded.');
                 alert('Máy chủ đã gửi email xác minh. Anh hãy kiểm tra Inbox và Spam.');
             } catch (err) {
-                alert('Không thể gửi email xác minh: ' + (err.message || err));
+                // Never log the Firebase ID token or other credentials.
+                console.error('[Dautu Auth] Resend verification failed.', {
+                    stage,
+                    name: err && err.name,
+                    message: err && err.message,
+                    code: err && err.code,
+                    httpStatus: err && err.httpStatus
+                }, err);
+                const hint = stage === 'refreshing-firebase-token'
+                    ? ' Không lấy được Firebase Token; hãy đăng xuất, đăng nhập lại rồi thử.'
+                    : stage === 'sending-post' && err && err.name === 'TypeError'
+                        ? ' Trình duyệt có thể đã chặn request do CORS hoặc lỗi mạng; hãy kiểm tra Console và Network.'
+                        : '';
+                alert('Không thể gửi email xác minh: ' + (err.message || err) + hint);
             }
         }
 
