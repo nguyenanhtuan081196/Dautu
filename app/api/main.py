@@ -103,8 +103,15 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
     smtp_password = os.getenv("SMTP_APP_PASSWORD", "").replace(" ", "").strip()
     sender = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
     if not smtp_user or not smtp_password or not sender:
+        logger.error(
+            "smtp_configuration_missing smtp_user=%s smtp_password=%s smtp_from=%s",
+            bool(smtp_user), bool(smtp_password), bool(sender),
+        )
         raise RuntimeError("Email sender is not configured on the server")
 
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    logger.info("smtp_connection_start host=%s port=%s", smtp_host, smtp_port)
     message = EmailMessage()
     message["Subject"] = "Xác minh email tài khoản Dautu"
     message["From"] = f"Dautu <{sender}>"
@@ -122,12 +129,19 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
         "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>",
         subtype="html",
     )
-    with smtplib.SMTP(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587")), timeout=20) as server:
-        server.ehlo()
-        server.starttls()
-        server.ehlo()
-        server.login(smtp_user, smtp_password)
-        server.send_message(message)
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(smtp_user, smtp_password)
+            logger.info("smtp_authentication_succeeded")
+            server.send_message(message)
+            logger.info("smtp_message_accepted_by_provider")
+    except Exception as exc:
+        # Do not log recipient addresses, credentials, or verification URLs.
+        logger.error("smtp_delivery_failed error_type=%s", type(exc).__name__)
+        raise
 
 
 @lru_cache(maxsize=1)
@@ -156,7 +170,9 @@ def send_verification_email(
     to be verified yet. The server never accepts a recipient address from the
     browser: it uses the email claim from the verified Firebase ID token.
     """
+    logger.info("verification_request_received")
     if not authorization or not authorization.startswith("Bearer "):
+        logger.warning("verification_request_rejected reason=missing_bearer_token")
         raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
     token = authorization.removeprefix("Bearer ").strip()
     try:
@@ -166,8 +182,10 @@ def send_verification_email(
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired Firebase token") from exc
 
+    logger.info("verification_firebase_token_verified")
     email = claims.get("email")
     if not isinstance(email, str) or not email.strip():
+        logger.warning("verification_request_rejected reason=missing_email_claim")
         raise HTTPException(status_code=403, detail="A valid account email is required")
     email = email.strip().lower()
     if claims.get("email_verified") is True:
@@ -190,6 +208,7 @@ def send_verification_email(
             detail="Dịch vụ gửi email tạm thời không khả dụng. Vui lòng thử lại sau.",
         ) from exc
 
+    logger.info("verification_rate_limit_passed")
     frontend_url = os.getenv("FRONTEND_URL", "https://mimohouse.ddns.net").strip()
     try:
         action_settings = firebase_auth.ActionCodeSettings(
@@ -199,16 +218,87 @@ def send_verification_email(
         verification_url = firebase_auth.generate_email_verification_link(
             email, action_code_settings=action_settings, app=_firebase_app()
         )
-        _send_gmail_verification(email, verification_url)
+        logger.info("verification_link_generated")
     except HTTPException:
         raise
     except Exception as exc:
-        # Keep SMTP credentials and provider internals out of public responses.
+        logger.error("verification_link_generation_failed error_type=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail="Không tạo được liên kết xác minh. Vui lòng thử lại sau.",
+        ) from exc
+
+    logger.info("verification_smtp_delivery_started")
+    try:
+        _send_gmail_verification(email, verification_url)
+    except Exception as exc:
+        logger.error("verification_smtp_delivery_failed error_type=%s", type(exc).__name__)
         raise HTTPException(
             status_code=503,
             detail="Máy chủ chưa gửi được email. Vui lòng kiểm tra cấu hình SMTP trên Render.",
         ) from exc
+    logger.info("verification_email_sent")
     return {"status": "sent", "message": "Verification email sent"}
+
+
+# Public browser diagnostic: reports configuration presence only. It never sends email,
+# exposes secret values, or tests SMTP authentication. Direct navigation avoids CORS.
+_TEST_DIAGNOSTIC_WINDOW_SECONDS = 60
+_TEST_DIAGNOSTIC_MAX_REQUESTS = 5
+_test_diagnostic_state: dict[str, tuple[float, int]] = {}
+_test_diagnostic_lock = threading.Lock()
+
+
+def _enforce_diagnostic_rate_limit(client_key: str, now: float | None = None) -> None:
+    current = time.monotonic() if now is None else now
+    with _test_diagnostic_lock:
+        started, count = _test_diagnostic_state.get(client_key, (current, 0))
+        if current - started >= _TEST_DIAGNOSTIC_WINDOW_SECONDS:
+            started, count = current, 0
+        if count >= _TEST_DIAGNOSTIC_MAX_REQUESTS:
+            retry_after = max(1, int(_TEST_DIAGNOSTIC_WINDOW_SECONDS - (current - started)))
+            raise HTTPException(
+                status_code=429,
+                detail="Too many diagnostic requests. Please retry shortly.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        _test_diagnostic_state[client_key] = (started, count + 1)
+        if len(_test_diagnostic_state) > 2000:
+            cutoff = current - _TEST_DIAGNOSTIC_WINDOW_SECONDS
+            for key, (window_start, _) in list(_test_diagnostic_state.items()):
+                if window_start < cutoff:
+                    _test_diagnostic_state.pop(key, None)
+
+
+@router.get("/api/test-send-mail")
+def test_send_mail_diagnostic(request: Request) -> dict[str, Any]:
+    """Safe browser check of mail-related configuration; does not send a message."""
+    client_key = request.client.host if request.client else "unknown"
+    _enforce_diagnostic_rate_limit(client_key)
+    smtp_user = bool(os.getenv("SMTP_USER", "").strip())
+    smtp_password = bool(os.getenv("SMTP_APP_PASSWORD", "").strip())
+    smtp_from = bool(os.getenv("SMTP_FROM_EMAIL", os.getenv("SMTP_USER", "")).strip())
+    firebase_credentials = bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip())
+    frontend_url_configured = bool(os.getenv("FRONTEND_URL", "").strip())
+    smtp_configured = smtp_user and smtp_password and smtp_from
+    logger.info(
+        "mail_diagnostic_completed smtp_configured=%s firebase_credentials_configured=%s frontend_url_configured=%s",
+        smtp_configured, firebase_credentials, frontend_url_configured,
+    )
+    return {
+        "status": "ok" if smtp_configured and firebase_credentials else "needs_configuration",
+        "smtp": {
+            "user_configured": smtp_user,
+            "app_password_configured": smtp_password,
+            "from_address_configured": smtp_from,
+            "configuration_complete": smtp_configured,
+        },
+        "firebase_service_account_configured": firebase_credentials,
+        "frontend_url_configured": frontend_url_configured,
+        "frontend_url_uses_default": not frontend_url_configured,
+        "email_sent": False,
+        "note": "This endpoint checks configuration presence only. It does not connect to SMTP or send email.",
+    }
 
 
 ADMIN_EMAIL = "nguyenanhtuan081196@gmail.com"
@@ -802,3 +892,24 @@ app = create_app(
     startup_handler=startup,
     shutdown_handler=shutdown,
 )
+
+
+@app.middleware("http")
+async def log_http_request(request: Request, call_next):
+    """Log request arrival and completion, including CORS preflight requests."""
+    started = time.monotonic()
+    logger.info("http_request_started method=%s path=%s", request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.error(
+            "http_request_failed method=%s path=%s error_type=%s",
+            request.method, request.url.path, type(exc).__name__,
+        )
+        raise
+    elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+    logger.info(
+        "http_request_completed method=%s path=%s status=%s duration_ms=%s",
+        request.method, request.url.path, response.status_code, elapsed_ms,
+    )
+    return response
