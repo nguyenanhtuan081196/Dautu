@@ -448,6 +448,7 @@ class MailDiagnosticTests(unittest.TestCase):
             {
                 "SMTP_USER": "sender@example.com",
                 "SMTP_APP_PASSWORD": "sensitive-value",
+                "SMTP_FROM_EMAIL": "",
             },
             clear=True,
         ):
