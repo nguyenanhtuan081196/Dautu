@@ -2,7 +2,8 @@
 
 The scheduler never runs crawler work on the ASGI event loop. A missed latest
 weekday run is recovered from Atlas after a restart; successful dates are not
-repeated. Render may restart a Free service at any time, so this state is durable.
+repeated. Metadata publication is a separate idempotent step so a process crash
+between crawling and publication is recoverable on the next poll.
 """
 from __future__ import annotations
 
@@ -51,8 +52,15 @@ def _has_successful_run(scheduled_for: str) -> bool:
     ) is not None
 
 
+def _ensure_price_metadata(scheduled_for: str) -> dict:
+    """Publish metadata from a durable successful run, without clobbering newer data."""
+    from app.pipeline.price_metadata import ensure_price_metadata
+
+    return ensure_price_metadata(database(), scheduled_for)
+
+
 async def price_scheduler_loop() -> None:
-    """Poll gently; dispatch blocking VNstock/pandas work to a background thread."""
+    """Poll gently; dispatch crawler and metadata I/O to background threads."""
     attempted_dates: set[str] = set()
     while True:
         # Let FastAPI finish startup and begin serving requests before any Atlas polling.
@@ -60,35 +68,72 @@ async def price_scheduler_loop() -> None:
         scheduled_for = None
         try:
             due_date = latest_due_weekday()
-            if due_date is not None:
-                scheduled_for = due_date.isoformat()
-                if scheduled_for not in attempted_dates:
-                    already_done = await asyncio.to_thread(_has_successful_run, scheduled_for)
-                    if already_done:
-                        attempted_dates.add(scheduled_for)
-                    else:
-                        attempted_dates.add(scheduled_for)
-                        logger.info("Starting scheduled price sync for %s (Vietnam time)", scheduled_for)
-                        from app.pipeline.price_job import run_price_job
+            if due_date is None:
+                continue
 
-                        result = await asyncio.to_thread(
-                            run_price_job,
-                            scheduled_for=scheduled_for,
-                        )
-                        if result.get("status") == "skipped":
-                            # A prior process may still own an unexpired Atlas lease.
-                            # Recheck on the next poll so an expired lease is recoverable.
-                            attempted_dates.discard(scheduled_for)
-                        logger.info(
-                            "Scheduled price sync finished for %s: status=%s success=%s failed=%s",
-                            scheduled_for,
-                            result.get("status"),
-                            result.get("symbols_success"),
-                            result.get("symbols_failed"),
-                        )
+            scheduled_for = due_date.isoformat()
+            if scheduled_for in attempted_dates:
+                continue
+
+            already_done = await asyncio.to_thread(_has_successful_run, scheduled_for)
+            if already_done:
+                # Covers a crash after the crawler committed success but before
+                # the metadata write. This path is intentionally retried if it fails.
+                metadata_result = await asyncio.to_thread(
+                    _ensure_price_metadata, scheduled_for
+                )
+                attempted_dates.add(scheduled_for)
+                logger.info(
+                    "Recovered price metadata for %s: %s",
+                    scheduled_for,
+                    metadata_result.get("status"),
+                )
+                continue
+
+            logger.info(
+                "Starting scheduled price sync for %s (Vietnam time)", scheduled_for
+            )
+            from app.pipeline.price_job import run_price_job
+
+            result = await asyncio.to_thread(
+                run_price_job,
+                scheduled_for=scheduled_for,
+            )
+            status = result.get("status")
+            if status != "succeeded":
+                # Partial/failed runs retain their Atlas checkpoints and are retried
+                # on the next poll. Metadata is published only after full success.
+                attempted_dates.discard(scheduled_for)
+                logger.warning(
+                    "Scheduled price sync for %s is %s; recovery will retry "
+                    "(success=%s failed=%s)",
+                    scheduled_for,
+                    status,
+                    result.get("symbols_success"),
+                    result.get("symbols_failed"),
+                )
+                continue
+
+            # A crash here is safe: the next poll sees the successful durable run
+            # and takes the already_done recovery branch above.
+            metadata_result = await asyncio.to_thread(
+                _ensure_price_metadata, scheduled_for
+            )
+            attempted_dates.add(scheduled_for)
+            logger.info(
+                "Scheduled price sync and metadata finished for %s: "
+                "success=%s failed=%s metadata=%s",
+                scheduled_for,
+                result.get("symbols_success"),
+                result.get("symbols_failed"),
+                metadata_result.get("status"),
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
             if scheduled_for:
+                # Retry both failed crawls and metadata publication on the next poll.
                 attempted_dates.discard(scheduled_for)
-            logger.exception("Price scheduler iteration failed; it will retry on the next poll")
+            logger.exception(
+                "Price scheduler iteration failed; it will retry on the next poll"
+            )
