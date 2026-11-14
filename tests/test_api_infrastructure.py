@@ -2,7 +2,11 @@
 import unittest
 from unittest.mock import patch
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from app.core.config import get_allowed_hosts, get_allowed_origins
+from app.middleware import install_middleware
 
 
 class InfrastructureConfigTests(unittest.TestCase):
@@ -35,6 +39,33 @@ class InfrastructureConfigTests(unittest.TestCase):
                 get_allowed_hosts(),
                 ["localhost", "127.0.0.1", "testserver"],
             )
+
+    def test_cors_preflight_allows_authorization_and_cache_control(self):
+        app = FastAPI()
+        app.add_api_route("/api/stocks", lambda: {"ok": True}, methods=["GET"])
+        with (
+            patch("app.middleware.get_allowed_origins", return_value=["https://mimohouse.ddns.net"]),
+            patch("app.middleware.get_allowed_hosts", return_value=["testserver"]),
+        ):
+            install_middleware(app)
+            with TestClient(app) as client:
+                response = client.options(
+                    "/api/stocks",
+                    headers={
+                        "Origin": "https://mimohouse.ddns.net",
+                        "Access-Control-Request-Method": "GET",
+                        "Access-Control-Request-Headers": "authorization,cache-control",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("Access-Control-Allow-Origin"),
+            "https://mimohouse.ddns.net",
+        )
+        allowed_headers = response.headers.get("Access-Control-Allow-Headers", "").lower()
+        self.assertIn("authorization", allowed_headers)
+        self.assertIn("cache-control", allowed_headers)
 
 
 if __name__ == "__main__":
