@@ -313,19 +313,28 @@ async def startup() -> None:
         _price_scheduler_task = asyncio.create_task(
             price_scheduler_loop(), name="dautu-price-scheduler"
         )
+    if os.getenv("ENABLE_REALTIME_CRAWLER", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        from app.pipeline.realtime_collector import realtime_collector_loop
+        global _realtime_collector_task
+        _realtime_collector_task = asyncio.create_task(
+            realtime_collector_loop(), name="dautu-ssi-realtime-collector"
+        )
 
 
 _price_scheduler_task: asyncio.Task | None = None
+_realtime_collector_task: asyncio.Task | None = None
 
 
 async def shutdown() -> None:
     """Stop the scheduler cleanly before closing the shared Atlas client."""
-    global _price_scheduler_task
-    task = _price_scheduler_task
+    global _price_scheduler_task, _realtime_collector_task
+    tasks = [task for task in (_price_scheduler_task, _realtime_collector_task) if task is not None]
     _price_scheduler_task = None
-    if task is not None:
+    _realtime_collector_task = None
+    for task in tasks:
         task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @router.api_route("/healthz", methods=["GET", "HEAD"])
@@ -375,6 +384,35 @@ def price_metadata(
         "symbols_success": document.get("symbols_success", 0),
         "symbols_failed": document.get("symbols_failed", 0),
     }
+
+
+@router.get("/api/realtime")
+def list_realtime_prices(
+    _: dict[str, Any] = Depends(require_user),
+    db: Database = Depends(db_dependency),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """Read the latest SSI ticks from Atlas; this route never calls SSI."""
+    return list(
+        db.realtime_prices.find({}, {"_id": 0})
+        .sort("symbol", 1)
+        .limit(limit)
+    )
+
+
+@router.get("/api/realtime/{symbol}")
+def get_realtime_price(
+    symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
+    _: dict[str, Any] = Depends(require_user),
+    db: Database = Depends(db_dependency),
+) -> dict[str, Any]:
+    """Read one latest SSI tick from Atlas; never make an upstream request."""
+    document = db.realtime_prices.find_one(
+        {"_id": symbol.upper()}, {"_id": 0}
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail="Realtime price not found")
+    return document
 
 
 @router.get("/api/status")
