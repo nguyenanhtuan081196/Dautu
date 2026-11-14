@@ -137,7 +137,7 @@ Kiến trúc được giữ tách biệt:
 Tài liệu SSI chính thức:
 
 - [Tổng quan FastConnect và điều kiện đăng ký](https://developers.ssi.com.vn/docs/getting-started/overview)
-- [Quy trình đăng ký và kích hoạt](https://developers.ssi.com.vn/docs/getting-started/registration)
+- [Quy trình đăng ký và kích hoạt](https://developers.ssi.com.vn/en/docs/getting-started/registration)\n- [Tạo và quản lý API Key](https://developers.ssi.com.vn/en/docs/getting-started/api-keys)\n- [Điều kiện sử dụng và môi trường UAT/Production](https://developers.ssi.com.vn/docs/getting-started/terms-and-environments)
 - [Python SDK 3.3.2](https://developers.ssi.com.vn/en/docs/sdk/python/overview)
 - [WebSocket Market Data](https://developers.ssi.com.vn/en/docs/tutorials/websocket-data)
 - [Cấu hình SDK, reconnect và retry](https://developers.ssi.com.vn/en/docs/sdk/python/configuration)
