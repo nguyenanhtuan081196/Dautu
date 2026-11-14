@@ -123,10 +123,10 @@ def update_user(
         changes["expired_at"] = expiry
 
     changes["updated_at"] = datetime.now(timezone.utc)
-    db.users.update_one({"email": normalized_email}, {"$set": changes})
 
-    # Keep the legacy Firestore-backed browser membership in sync. MongoDB
-    # remains the account-state registry; Firestore still protects direct reads.
+    # Update the legacy membership first, then MongoDB. Authorization reads
+    # MongoDB on every request; if the second write fails, the API reports a
+    # reconciliation error rather than silently claiming success.
     firestore_changes: dict[str, Any] = {}
     if "role" in changes:
         firestore_changes["role"] = changes["role"]
@@ -138,12 +138,12 @@ def update_user(
                 normalized_email
             ).update(firestore_changes)
         except Exception as exc:
-            # Do not hide a partial write: the caller needs to know to reconcile.
             raise HTTPException(
                 status_code=503,
-                detail="MongoDB was updated but Firestore synchronization failed; retry or reconcile this account",
+                detail="Firestore synchronization failed; MongoDB account state was not changed",
             ) from exc
 
+    db.users.update_one({"email": normalized_email}, {"$set": changes})
     updated = db.users.find_one({"email": normalized_email}, {"_id": 0})
     return {
         "email": updated.get("email"),
