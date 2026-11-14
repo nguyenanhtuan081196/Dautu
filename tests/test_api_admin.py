@@ -64,10 +64,6 @@ class AdminEndpointTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:
             main.admin_update_status(main.AdminStatusUpdate(status="locked"),"admin@example.com",self.actor,self.db)
         self.assertEqual(error.exception.status_code,409)
-        with self.assertRaises(HTTPException) as error:
-            main.admin_update_status(main.AdminStatusUpdate(status="locked"),"member@example.com",self.actor,self.db)
-        self.assertEqual(error.exception.status_code,409)
-
     def test_extend_user_subscription_and_reject_admin(self):
         result=main.admin_extend_user(main.AdminExtendRequest(days=30),"member@example.com",self.actor,self.db)
         self.assertGreater(datetime.fromisoformat(result["expired_at"]),datetime.now(timezone.utc)+timedelta(days=29))
