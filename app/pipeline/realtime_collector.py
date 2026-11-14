@@ -233,10 +233,6 @@ async def _run_stream_session() -> None:
             finally:
                 stop.set()
                 await flush_task
-                try:
-                    await stream.streaming.disconnect()
-                except Exception:
-                    logger.debug("SSI stream disconnect raised during cleanup", exc_info=True)
 
 
 async def realtime_collector_loop() -> None:
