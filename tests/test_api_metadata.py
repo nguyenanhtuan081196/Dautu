@@ -46,9 +46,25 @@ class MetadataFirestore:
         }
 
 
+class AccountUsers:
+    def __init__(self):
+        self.records = {}
+
+    def find_one(self, query):
+        return self.records.get(query["email"])
+
+    def update_one(self, query, update, upsert=False):
+        email = query["email"]
+        if email not in self.records and upsert:
+            self.records[email] = dict(update.get("$setOnInsert", {}))
+
+
 class PriceMetadataApiTests(unittest.TestCase):
     def _get(self, document=None, error=None, db_error=None):
-        db = SimpleNamespace(app_metadata=MetadataCollection(document, error=error))
+        db = SimpleNamespace(
+            app_metadata=MetadataCollection(document, error=error),
+            users=AccountUsers(),
+        )
         claims = {
             "uid": "test-user",
             "email": "test-user@example.com",
@@ -91,16 +107,13 @@ class PriceMetadataApiTests(unittest.TestCase):
 
 
 
-    def test_database_connection_error_returns_safe_fallback(self):
+    def test_database_connection_error_fails_closed_before_authorizing_metadata(self):
         response = self._get(db_error=ConnectionError("Atlas connection failed"))
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {
-            "last_updated": None,
-            "status": "unknown",
-            "symbols_total": 0,
-            "symbols_success": 0,
-            "symbols_failed": 0,
-        })
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            "Account authorization service unavailable",
+        )
 
     def test_database_read_error_returns_safe_fallback(self):
         response = self._get(error=ConnectionError("Atlas unavailable"))
