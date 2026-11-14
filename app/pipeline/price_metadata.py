@@ -65,7 +65,7 @@ def ensure_price_metadata(db: Any, scheduled_for: str) -> dict[str, Any]:
         # Compare-and-set: if another process changed the document after our
         # read, this update cannot overwrite that newer write.
         db.app_metadata.update_one(
-            {"_id": METADATA_ID, "last_updated": existing_timestamp, **({"run_id": existing["run_id"]} if "run_id" in existing else {"run_id": {"$exists": False}})},
+            {"_id": METADATA_ID, "last_updated": existing_timestamp, "run_id": existing.get("run_id")},
             {"$set": {key: value for key, value in metadata.items() if key != "_id"}},
         )
         saved = db.app_metadata.find_one({"_id": METADATA_ID}) or {}
