@@ -544,7 +544,7 @@ def admin_update_role(payload: AdminRoleUpdate, email: str = Path(..., min_lengt
         "legacy_provenance": "admin_managed",
         "created_source": "admin_managed",
         "updated_at": now,
-    }}})
+    }})
     after = db.users.find_one({"email": target["email"]})
     _admin_audit(db, actor["email"], target["email"], "role_changed", before, after)
     return _serialize_account(after)
