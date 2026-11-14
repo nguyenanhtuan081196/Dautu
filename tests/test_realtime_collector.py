@@ -1,5 +1,7 @@
 """Unit tests for the opt-in SSI realtime collector (no network or Atlas required)."""
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from app.pipeline.realtime_collector import (
@@ -38,6 +40,32 @@ class RealtimeCollectorTests(unittest.TestCase):
     def test_invalid_or_empty_trade_is_ignored(self):
         self.assertIsNone(normalize_trade({"s": "SSI", "p": "N/A"}))
         self.assertIsNone(normalize_trade({"p": "45000"}))
+
+    def test_finalizer_upserts_one_d1_candle_per_latest_symbol(self):
+        class Prices:
+            def find(self, query):
+                self.query = query
+                return [{
+                    "_id": "SSI", "symbol": "SSI", "trading_date": "2026-11-16",
+                    "price": 45500, "open": 45000, "high": 45800, "low": 44900,
+                    "total_volume": 1250000,
+                }]
+        class History:
+            def __init__(self):
+                self.saved = []
+            def replace_one(self, query, document, upsert=False):
+                self.saved.append((query, document, upsert))
+        prices, history = Prices(), History()
+        fake_db = SimpleNamespace(realtime_prices=prices, price_history=history)
+        with patch("app.pipeline.realtime_collector.get_database", return_value=fake_db):
+            from app.pipeline.realtime_collector import _finalize_daily_candles
+            count = _finalize_daily_candles(datetime(2026, 11, 16).date())
+        self.assertEqual(count, 1)
+        query, candle, upsert = history.saved[0]
+        self.assertEqual(query["_id"], "SSI:D1:2026-11-16")
+        self.assertEqual(candle["close"], 45500)
+        self.assertEqual(candle["volume"], 1250000)
+        self.assertTrue(upsert)
 
     def test_feature_is_disabled_by_default(self):
         from unittest.mock import patch
