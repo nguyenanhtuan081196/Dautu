@@ -83,3 +83,5 @@ def ensure_indexes(db: Database | None = None) -> None:
     db.pipeline_runs.create_index([("run_id", ASCENDING)], unique=True)
     db.dataset_versions.create_index([("version_id", ASCENDING)], unique=True)
     db.app_metadata.create_index([("key", ASCENDING)], unique=True)
+    db.realtime_prices.create_index([("symbol", ASCENDING)], unique=True)
+    db.realtime_prices.create_index([("updated_at", ASCENDING)])
