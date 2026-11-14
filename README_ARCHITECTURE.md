@@ -97,41 +97,109 @@ GitHub Actions does **not** run the regular daily price crawler.
 Never commit database URIs, Firebase private keys or other credentials.
 
 
-## 8. Optional SSI realtime market-data collector
+## 8. Optional SSI FastConnect realtime market-data collector
 
-The realtime feature is opt-in and disabled unless `ENABLE_REALTIME_CRAWLER=true`.
-When enabled, a separate in-process background task uses the official SSI FastConnect
-Python SDK (`ssi-sdk`) to connect to SSI's market-data WebSocket. API request
-handlers never call SSI; the authenticated `/api/realtime` and
-`/api/realtime/{symbol}` endpoints read only from MongoDB Atlas.
+### Trạng thái hiện tại: OFF
 
-- SSI market-data stream is event-driven (push), not a REST polling loop. The
-  collector subscribes to the configured Atlas stock universe in groups of
-  `SSI_STREAM_BATCH_SIZE` (default 25, capped at 50); it processes at most
-  `REALTIME_MAX_SYMBOLS` symbols (default 100).
-- Incoming trade events are coalesced by symbol in a bounded in-memory queue
-  (default 2,000 entries) and flushed to `realtime_prices` in bulk every
-  `REALTIME_FLUSH_SECONDS` (default 2 seconds). Each symbol has one latest
-  document, upserted by symbol.
-- The collector runs on weekdays during Vietnam cash-equity sessions:
-  09:00–11:30 and 13:00–15:00. It does not intentionally stream during the
-  lunch break or weekends. After 15:00 it snapshots the latest day's prices
-  into D1 documents in `price_history`.
-- A disconnect/error is retried with exponential backoff (5 seconds to a
-  maximum of 120 seconds). A full queue drops the oldest queued tick to
-  prioritize the latest price. This is a latest-price cache, not a complete
-  exchange tick archive.
-- Required Render secrets: `SSI_CLIENT_ID`, `SSI_API_KEY`,
-  `SSI_API_SECRET`. Never commit these values. The SSI account must be
-  approved for FastConnect market-data streaming. Market-data streaming is
-  configured without trading callbacks or order permissions.
-- Other safe controls: `ENABLE_REALTIME_CRAWLER=false` (default/off),
-  `SSI_STREAM_BATCH_SIZE=25`, `REALTIME_MAX_SYMBOLS=100`,
-  `REALTIME_QUEUE_MAXSIZE=2000`, and `REALTIME_FLUSH_SECONDS=2`.
-- Keep one Render instance. Multiple instances would require a distributed
-  collector lease/leader-election mechanism before enabling this feature.
-- Render Free may sleep/restart, so the in-process collector is best-effort and
-  cannot guarantee continuous realtime delivery while the process is stopped.
-  The daily D1 snapshot is based on the latest received SSI trade event; if no
-  event was received for a symbol that day, that symbol is not finalized from
-  the realtime collection.
+Tính năng Realtime đã có trong code nhưng **chưa được bật**. Giữ
+`ENABLE_REALTIME_CRAWLER=false` trên Render (hoặc để trống; mặc định của code
+là `false`). Không bật trước khi có credentials SSI, kiểm tra quyền Market
+Data, hoàn tất smoke test và có xác nhận riêng của chủ dự án.
+
+Kiến trúc được giữ tách biệt:
+
+- Background collector trong `app/pipeline/realtime_collector.py` kết nối SSI
+  FastConnect WebSocket và ghi snapshot mới nhất vào MongoDB Atlas
+  (`realtime_prices`).
+- API chỉ đọc MongoDB qua `/api/realtime` và `/api/realtime/{symbol}`;
+  request của frontend không gọi SSI.
+- Đây là luồng dữ liệu push, không phải REST polling. Collector hoạt động
+  trong tiến trình Render API, không phải một worker độc lập.
+
+### A. Đăng ký SSI FastConnect và tạo credentials
+
+1. Cần có tài khoản chứng khoán SSI đang hoạt động.
+2. Truy cập [SSI Developer Portal](https://developers.ssi.com.vn/) và tạo/
+   đăng nhập tài khoản Developer theo hướng dẫn **Registration & Activation**.
+3. Hoàn tất điều khoản đăng ký FastConnect. Chọn môi trường **Production**
+   khi chuẩn bị chạy dữ liệu thật; UAT và Production có credentials tách biệt.
+4. Tạo một API Key riêng cho Dautu. Chỉ cấp scope/quyền **Market Data /
+   streaming dữ liệu thị trường** cần thiết. Không cấp Trading, đặt lệnh,
+   tài khoản hoặc portfolio permissions.
+5. Lưu lại đúng ba giá trị do Developer Portal cấp:
+   - `Client ID` → `SSI_CLIENT_ID`
+   - `API Key` → `SSI_API_KEY`
+   - `API Secret` → `SSI_API_SECRET`
+6. API Secret thường chỉ hiển thị khi tạo key. Lưu ngay vào nơi quản lý bí mật
+   an toàn; không gửi qua chat, email thường, commit Git hoặc đưa vào file
+   README. Nếu lộ, thu hồi/xoá key cũ và tạo key mới.
+
+Tài liệu SSI chính thức:
+
+- [Tổng quan FastConnect và điều kiện đăng ký](https://developers.ssi.com.vn/docs/getting-started/overview)
+- [Quy trình đăng ký và kích hoạt](https://developers.ssi.com.vn/docs/getting-started/registration)
+- [Python SDK 3.3.2](https://developers.ssi.com.vn/en/docs/sdk/python/overview)
+- [WebSocket Market Data](https://developers.ssi.com.vn/en/docs/tutorials/websocket-data)
+- [Cấu hình SDK, reconnect và retry](https://developers.ssi.com.vn/en/docs/sdk/python/configuration)
+
+> Lưu ý: Bộ key của tài liệu FastConnect/iBoard phiên bản cũ
+> (`ConsumerID`, `ConsumerSecret`, `PrivateKey`) không đồng nhất với bộ
+> credentials của SDK/API v3 đang được tích hợp ở đây. Không điền nhầm
+> ConsumerID/PrivateKey vào ba biến `SSI_*` trên.
+
+### B. Cấu hình biến môi trường trên Render
+
+Sau khi có đủ credentials và đã xác nhận key có scope Market Data:
+
+1. Mở Render Dashboard → service **dautu-api** → **Environment**.
+2. Thêm ba biến dạng **Secret**:
+   - `SSI_CLIENT_ID` = Client ID từ SSI Developer Portal
+   - `SSI_API_KEY` = API Key
+   - `SSI_API_SECRET` = API Secret
+3. Có thể thêm các biến giới hạn tải (không bắt buộc):
+   - `SSI_STREAM_BATCH_SIZE=25` (code giới hạn tối đa 50)
+   - `REALTIME_MAX_SYMBOLS=100`
+   - `REALTIME_QUEUE_MAXSIZE=2000`
+   - `REALTIME_FLUSH_SECONDS=2`
+4. **Giữ nguyên `ENABLE_REALTIME_CRAWLER=false`.** Lưu credentials không tự
+   khởi chạy collector. Không đổi thành `true` cho đến khi có kế hoạch smoke
+   test và được chủ dự án xác nhận.
+5. Không đưa giá trị thật của credentials vào GitHub Actions Variables,
+   README, source code hoặc log. Chỉ lưu tại Render Environment (Secret).
+6. Sau này, khi đã được cho phép bật, đổi riêng
+   `ENABLE_REALTIME_CRAWLER=true` rồi thực hiện deploy/restart có kiểm soát.
+   Xác minh log kết nối, trạng thái subscription và dữ liệu mới trong
+   `realtime_prices`; nếu có lỗi thì chuyển về `false` ngay.
+
+### C. Kết nối lại khi mạng đứt / Render restart
+
+- SSI Python SDK Stream có `auto_reconnect` mặc định bật. SDK thực hiện
+  exponential backoff có jitter (mặc định bắt đầu 2 giây, tối đa 60 giây),
+  lấy token mới khi cần và tự subscribe lại các topic sau khi reconnect.
+- Collector đăng ký callback trạng thái kết nối để log các trạng thái
+  `connected`, `disconnected`, `reconnected`, `failed`. Trạng thái
+  `failed` được đẩy ra vòng điều phối để đóng session và thử khởi tạo lại.
+- Nếu lần khởi tạo/auth/connect mới thất bại, vòng ngoài retry với backoff
+  5 → 10 → 20 → 40 → 80 → tối đa 120 giây. Backoff chỉ reset sau khi kết nối
+  WebSocket thành công, không reset trước mỗi lần thử.
+- Khi Render restart/sleep, tiến trình và socket cũ mất. Khi service chạy lại,
+  task được tạo lại từ startup và tự kết nối/auth/subscribe từ đầu; không thể
+  phục hồi các tick đã bỏ lỡ trong thời gian service dừng.
+- Render Free có thể sleep/restart và không bảo đảm WebSocket chạy liên tục.
+  Vì vậy tính năng này là best-effort trên kiến trúc hiện tại, không phải
+  feed realtime SLA. Muốn duy trì liên tục cần worker luôn bật hoặc nền tảng
+  chạy nền phù hợp, kèm cơ chế leader lease trước khi mở rộng nhiều instance.
+
+### D. Giới hạn dữ liệu và vận hành
+
+- Collector chỉ chạy ngày thường trong phiên 09:00–11:30 và 13:00–15:00
+  (Asia/Ho_Chi_Minh).
+- Mỗi mã có một document mới nhất trong `realtime_prices`; queue có giới hạn
+  và gộp tick theo mã để bảo vệ RAM 512 MB. Khi queue đầy, tick cũ nhất bị
+  loại để ưu tiên snapshot mới.
+- Đây không phải kho lưu toàn bộ tick. D1 cuối ngày hiện được tạo từ snapshot
+  realtime gần nhất; cần kiểm chứng payload OHLC/volume thực tế của SSI trước
+  khi coi đó là nguồn nến D1 chính thức. Không được dùng để ghi đè dữ liệu
+  lịch sử chuẩn nếu chưa có quy tắc đối soát.
+- Chỉ chạy một Render instance. Nhiều instance cần distributed lease/
+  leader-election để tránh nhiều collector cùng subscribe và ghi dữ liệu.
