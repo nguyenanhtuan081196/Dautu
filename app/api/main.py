@@ -334,7 +334,10 @@ def require_guest(authorization: str | None = Header(default=None)) -> dict[str,
         raise HTTPException(status_code=403, detail="Account role is not authorized")
 
     expired_at = account.get("expired_at")
-    if expired_at is not None:
+    if role == "admin":
+        # Admin subscriptions do not expire; lock state still applies above.
+        expired_at = None
+    elif expired_at is not None:
         if not isinstance(expired_at, datetime):
             raise HTTPException(status_code=403, detail="Account expiry is invalid")
         if expired_at.tzinfo is None:
