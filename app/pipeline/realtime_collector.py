@@ -269,10 +269,12 @@ async def realtime_collector_loop() -> None:
         now = datetime.now(VN_TZ)
         try:
             if is_market_window(now):
-                # Successful connect resets the outer retry budget inside the
-                # session; failed initial connects retain/increase the backoff.
-                await _run_stream_session()
-                retry_seconds = 5
+                # Reset only after WebSocket connection and all subscriptions succeed.
+                def reset_retry_budget() -> None:
+                    nonlocal retry_seconds
+                    retry_seconds = 5
+
+                await _run_stream_session(on_connected=reset_retry_budget)
                 await asyncio.sleep(2)
                 continue
 
