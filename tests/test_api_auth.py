@@ -324,7 +324,10 @@ class RequireUserTests(unittest.TestCase):
         data_routes = [
             route for route in main.app.routes
             if getattr(route, "path", "").startswith("/api/")
-            and getattr(route, "path", "") != "/api/auth/send-verification"
+            and getattr(route, "path", "") not in {
+                "/api/auth/send-verification",
+                "/api/test-send-mail",
+            }
         ]
         self.assertGreater(len(data_routes), 0)
         for route in data_routes:
@@ -410,6 +413,51 @@ class RequireUserTests(unittest.TestCase):
         self.assertNotIn("raw_payload", main.STOCK_RESPONSE_FIELDS)
         self.assertNotIn("run_id", main.SCREENER_RESPONSE_FIELDS)
         self.assertNotIn("provider_response", main.AI_RESPONSE_FIELDS)
+
+
+class MailDiagnosticTests(unittest.TestCase):
+    def setUp(self):
+        main._test_diagnostic_state.clear()
+
+    def test_public_browser_diagnostic_reports_presence_without_sending_mail(self):
+        request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+        with patch.dict(
+            "os.environ",
+            {
+                "SMTP_USER": "sender@example.com",
+                "SMTP_APP_PASSWORD": "not-a-real-secret",
+                "SMTP_FROM_EMAIL": "sender@example.com",
+                "FIREBASE_SERVICE_ACCOUNT_JSON": "{configured}",
+                "FRONTEND_URL": "https://example.com",
+            },
+            clear=True,
+        ):
+            result = main.test_send_mail_diagnostic(request)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["smtp"]["configuration_complete"])
+        self.assertTrue(result["firebase_service_account_configured"])
+        self.assertTrue(result["frontend_url_configured"])
+        self.assertFalse(result["email_sent"])
+        self.assertIn("does not connect to SMTP", result["note"])
+
+    def test_public_browser_diagnostic_does_not_reveal_secret_values(self):
+        request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.2"))
+        with patch.dict(
+            "os.environ",
+            {
+                "SMTP_USER": "sender@example.com",
+                "SMTP_APP_PASSWORD": "sensitive-value",
+            },
+            clear=True,
+        ):
+            result = main.test_send_mail_diagnostic(request)
+
+        serialized = str(result)
+        self.assertNotIn("sensitive-value", serialized)
+        self.assertNotIn("sender@example.com", serialized)
+        self.assertEqual(result["status"], "needs_configuration")
+        self.assertFalse(result["smtp"]["configuration_complete"])
 
 
 if __name__ == "__main__":
