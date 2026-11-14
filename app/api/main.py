@@ -270,6 +270,43 @@ def _get_or_create_account(claims: dict[str, Any]) -> dict[str, Any]:
         db = get_database()
         account = db.users.find_one({"email": email})
         if account is not None:
+            # PR #46 may already have migrated self-created Firestore documents
+            # before provenance checks existed. Revalidate those legacy records
+            # once and immediately downgrade unverifiable accounts to Guest.
+            if account.get("created_source") == "firestore_migration":
+                legacy, _ = _legacy_membership(email)
+                trusted_admin_created = (
+                    legacy is not None
+                    and str(legacy.get("created_by", "")).strip().lower() == ADMIN_EMAIL
+                )
+                legacy_role = legacy.get("role") if legacy is not None else None
+                if (
+                    legacy_role == "user"
+                    and trusted_admin_created
+                    and isinstance(legacy.get("expiresAt"), datetime)
+                ):
+                    migration_update = {
+                        "created_source": "firestore_admin_migration",
+                        "expired_at": legacy["expiresAt"],
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                elif legacy_role == "admin" and email == ADMIN_EMAIL:
+                    migration_update = {
+                        "created_source": "firestore_admin_migration",
+                        "expired_at": None,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                else:
+                    migration_update = {
+                        "role": "guest",
+                        "expired_at": None,
+                        "created_source": "firestore_untrusted_guest",
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                db.users.update_one({"email": email}, {"$set": migration_update})
+                account = db.users.find_one({"email": email})
+                if account is None:
+                    raise RuntimeError("Account security revalidation did not return a MongoDB record")
             return account
 
         legacy, created_at = _legacy_membership(email)
@@ -471,7 +508,7 @@ def admin_extend_user(payload: AdminExtendRequest, email: str = Path(..., min_le
     if isinstance(expiry, datetime) and expiry.tzinfo is None: expiry = expiry.replace(tzinfo=timezone.utc)
     new_expiry = max(now, expiry) + timedelta(days=payload.days) if isinstance(expiry, datetime) else now + timedelta(days=payload.days)
     before = dict(target)
-    db.users.update_one({"email": target["email"]}, {"$set": {"expired_at": new_expiry, "status": "active", "updated_at": now}})
+    db.users.update_one({"email": target["email"]}, {"$set": {"expired_at": new_expiry, "status": "active", "created_source": "admin_api", "updated_at": now}})
     after = db.users.find_one({"email": target["email"]})
     _admin_audit(db, actor["email"], target["email"], "subscription_extended", before, after)
     return _serialize_account(after)
@@ -492,7 +529,7 @@ def admin_update_role(payload: AdminRoleUpdate, email: str = Path(..., min_lengt
         expired_at = expiry
     else: expired_at = None
     before = dict(target)
-    db.users.update_one({"email": target["email"]}, {"$set": {"role": payload.role, "expired_at": expired_at, "updated_at": now}})
+    db.users.update_one({"email": target["email"]}, {"$set": {"role": payload.role, "expired_at": expired_at, "created_source": "admin_api", "updated_at": now}})
     after = db.users.find_one({"email": target["email"]})
     _admin_audit(db, actor["email"], target["email"], "role_changed", before, after)
     return _serialize_account(after)
