@@ -250,7 +250,9 @@ async def _run_stream_session(on_connected=None) -> None:
                 len(symbols), SSI_STREAM_BATCH_SIZE, config.auto_reconnect,
             )
 
-            if on_connected is not None:\n                on_connected()\n            flush_task = asyncio.create_task(_flush_worker(queue, stop), name="ssi-realtime-flush")
+            if on_connected is not None:
+                on_connected()
+            flush_task = asyncio.create_task(_flush_worker(queue, stop), name="ssi-realtime-flush")
             try:
                 while is_market_window() and not reconnect_failed.is_set():
                     await stream.streaming.wait(timeout_ms=5000)
