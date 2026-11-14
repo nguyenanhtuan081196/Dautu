@@ -295,6 +295,15 @@ def db_dependency() -> Database:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def metadata_db_dependency() -> Database | None:
+    """Metadata is non-critical UI data; DB connection failures use safe defaults."""
+    try:
+        return get_database()
+    except Exception:
+        logger.exception("Unable to obtain MongoDB connection for price metadata")
+        return None
+
+
 async def startup() -> None:
     """Initialize Atlas and launch the price scheduler without blocking API requests."""
     global _price_scheduler_task
@@ -333,7 +342,7 @@ def healthz() -> dict[str, str]:
 def price_metadata(
     response: Response,
     _: dict[str, Any] = Depends(require_user),
-    db: Database = Depends(db_dependency),
+    db: Database | None = Depends(metadata_db_dependency),
 ) -> dict[str, Any]:
     """Return the latest Atlas price-sync timestamp and outcome without caching."""
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -346,6 +355,8 @@ def price_metadata(
         "symbols_success": 0,
         "symbols_failed": 0,
     }
+    if db is None:
+        return fallback
     try:
         document = db.app_metadata.find_one(
             {"_id": "price_sync"},
