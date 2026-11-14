@@ -80,6 +80,7 @@ class AdminEndpointTests(unittest.TestCase):
         result=main.admin_update_role(main.AdminRoleUpdate(role="user",expired_at=expiry),"member@example.com",self.actor,self.db)
         self.assertEqual(result["role"],"user")
         self.assertIsNotNone(result["expired_at"])
+        self.assertEqual(result["created_source"],"admin_api")
 
     def test_role_change_cannot_demote_self_or_last_admin(self):
         with self.assertRaises(HTTPException) as error:
