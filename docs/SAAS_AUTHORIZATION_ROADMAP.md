@@ -71,3 +71,14 @@
 ## Transitional compatibility note
 
 The existing browser Admin modal still edits Firestore directly. Because PR 1 makes MongoDB authoritative after first migration, those legacy edits will not update already-migrated MongoDB records. Do not use the legacy modal to change roles or expiry after PR 1 is deployed; PR 2 replaces it with Admin APIs and the dedicated dashboard. This is explicitly called out to avoid a false impression that the old and new account stores remain bidirectionally synchronized.
+
+
+## Security hardening — Firestore privilege-escalation remediation
+
+- Firestore Rules deny all client-side create/update operations on `allowed_users` except the fixed Admin identity with a verified Firebase email.
+- Admin-managed legacy documents must carry immutable provenance fields: `createdBy`, `createdSource=admin_console`, and `updatedBy`. The Admin creator marker cannot be changed by later updates.
+- Legacy documents without this provenance are treated as untrusted and migrated/downgraded to Guest. The fixed bootstrap Admin is the sole pinned-identity compatibility exception.
+- Existing MongoDB accounts imported by the first authorization rollout are re-checked once against Firestore provenance. Unmarked/self-created records are immediately downgraded to Guest, have expiry cleared, and are marked as checked.
+- Firebase UID is bound to the MongoDB account; a mismatched UID is rejected.
+- All protected API tiers, including Admin, require `email_verified=true`; the send-verification endpoint remains available before verification.
+- Admin role changes mark the account as explicitly Admin-managed so a subsequent legacy provenance pass cannot undo an intentional server-side grant.

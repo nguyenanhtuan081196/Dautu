@@ -241,7 +241,7 @@ def _verify_firebase_token(authorization: str | None) -> dict[str, Any]:
 
 
 def _legacy_membership(email: str) -> tuple[dict[str, Any] | None, datetime]:
-    """Read the legacy Firestore allow-list only when an account is first provisioned."""
+    """Read the legacy Firestore record; its contents are untrusted until provenance is checked."""
     try:
         snapshot = (
             firestore.client(app=_firebase_app())
@@ -262,35 +262,90 @@ def _legacy_membership(email: str) -> tuple[dict[str, Any] | None, datetime]:
     return data, created_at
 
 
+def _legacy_membership_is_admin_created(email: str, legacy: dict[str, Any] | None) -> bool:
+    """Trust only explicit Admin provenance; old unmarked self-created docs fail closed.
+
+    The fixed bootstrap Admin is the sole compatibility exception because its
+    identity is independently pinned in server configuration.
+    """
+    if not legacy:
+        return False
+    if email == ADMIN_EMAIL and legacy.get("role") == "admin":
+        return True
+    return (
+        str(legacy.get("createdBy", "")).strip().lower() == ADMIN_EMAIL
+        and legacy.get("createdSource") == "admin_console"
+    )
+
+
+def _legacy_role_and_expiry(email: str, legacy: dict[str, Any] | None) -> tuple[str, datetime | None]:
+    """Translate a trusted legacy record into a safe MongoDB role and expiry."""
+    if not _legacy_membership_is_admin_created(email, legacy):
+        return "guest", None
+    legacy_role = legacy.get("role")
+    if legacy_role == "admin" and email == ADMIN_EMAIL:
+        return "admin", None
+    if legacy_role != "user":
+        return "guest", None
+    expired_at = legacy.get("expiresAt")
+    if not isinstance(expired_at, datetime):
+        return "guest", None
+    if expired_at.tzinfo is None:
+        expired_at = expired_at.replace(tzinfo=timezone.utc)
+    return "user", expired_at
+
+
 def _get_or_create_account(claims: dict[str, Any]) -> dict[str, Any]:
-    """Use MongoDB as the live account registry; migrate legacy Firestore users once."""
+    """Use MongoDB as the registry and re-check old Firestore migrations once.
+
+    Legacy Firestore documents without explicit Admin provenance are never
+    allowed to confer paid access. Existing PR-46 migrated records are checked
+    too, so previously imported self-created records are downgraded immediately.
+    """
     email = claims["email"]
     uid = str(claims.get("uid") or claims.get("sub") or "")
     try:
         db = get_database()
         account = db.users.find_one({"email": email})
+
         if account is not None:
+            existing_uid = account.get("firebase_uid")
+            if existing_uid and uid and existing_uid != uid:
+                raise HTTPException(status_code=403, detail="Firebase identity does not match this account")
+            if not existing_uid and uid:
+                db.users.update_one(
+                    {"email": email},
+                    {"$set": {"firebase_uid": uid, "updated_at": datetime.now(timezone.utc)}},
+                )
+                account["firebase_uid"] = uid
+
+            if (
+                account.get("created_source") == "firestore_migration"
+                and account.get("legacy_provenance_checked") is not True
+            ):
+                legacy, _ = _legacy_membership(email)
+                trusted = _legacy_membership_is_admin_created(email, legacy)
+                role, expired_at = _legacy_role_and_expiry(email, legacy)
+                provenance = "admin_created" if trusted else "untrusted_or_unmarked"
+                db.users.update_one(
+                    {"email": email},
+                    {"$set": {
+                        "role": role,
+                        "expired_at": expired_at,
+                        "legacy_provenance_checked": True,
+                        "legacy_provenance": provenance,
+                        "updated_at": datetime.now(timezone.utc),
+                        "created_source": "firestore_migration_verified" if trusted else "firestore_untrusted_legacy",
+                    }},
+                )
+                account = db.users.find_one({"email": email})
+                if account is None:
+                    raise RuntimeError("Account disappeared during legacy provenance verification")
             return account
 
         legacy, created_at = _legacy_membership(email)
-        if legacy is None:
-            role, expired_at = "guest", None
-        else:
-            legacy_role = legacy.get("role", "user")
-            if legacy_role == "admin":
-                if email != ADMIN_EMAIL:
-                    raise HTTPException(
-                        status_code=403, detail="Admin role is not authorized for this account"
-                    )
-                role = "admin"
-            elif legacy_role == "user":
-                role = "user"
-            else:
-                raise HTTPException(status_code=403, detail="Account role is not authorized")
-            expired_at = legacy.get("expiresAt")
-            if isinstance(expired_at, datetime) and expired_at.tzinfo is None:
-                expired_at = expired_at.replace(tzinfo=timezone.utc)
-
+        role, expired_at = _legacy_role_and_expiry(email, legacy)
+        trusted = _legacy_membership_is_admin_created(email, legacy)
         document = {
             "email": email,
             "firebase_uid": uid,
@@ -298,7 +353,17 @@ def _get_or_create_account(claims: dict[str, Any]) -> dict[str, Any]:
             "expired_at": expired_at,
             "role": role,
             "status": "active",
-            "created_source": "firestore_migration" if legacy is not None else "firebase_guest",
+            "created_source": (
+                "firestore_migration_verified" if trusted
+                else "firestore_untrusted_legacy" if legacy is not None
+                else "firebase_guest"
+            ),
+            "legacy_provenance_checked": True,
+            "legacy_provenance": (
+                "admin_created" if trusted
+                else "untrusted_or_unmarked" if legacy is not None
+                else "no_legacy_record"
+            ),
             "updated_at": datetime.now(timezone.utc),
         }
         try:
@@ -311,6 +376,8 @@ def _get_or_create_account(claims: dict[str, Any]) -> dict[str, Any]:
         account = db.users.find_one({"email": email})
         if account is None:
             raise RuntimeError("Account provisioning did not create a MongoDB record")
+        if account.get("firebase_uid") and uid and account["firebase_uid"] != uid:
+            raise HTTPException(status_code=403, detail="Firebase identity does not match this account")
         return account
     except HTTPException:
         raise
@@ -347,9 +414,7 @@ def require_guest(authorization: str | None = Header(default=None)) -> dict[str,
         if expired_at <= datetime.now(timezone.utc):
             raise HTTPException(status_code=401, detail="Account subscription has expired")
 
-    if claims.get("email_verified") is not True and not (
-        role == "admin" and claims["email"] == ADMIN_EMAIL
-    ):
+    if claims.get("email_verified") is not True:
         raise HTTPException(status_code=403, detail="Email verification is required")
 
     claims["app_role"] = role
@@ -472,7 +537,14 @@ def admin_update_role(payload: AdminRoleUpdate, email: str = Path(..., min_lengt
         expired_at = expiry
     else: expired_at = None
     before = dict(target)
-    db.users.update_one({"email": target["email"]}, {"$set": {"role": payload.role, "expired_at": expired_at, "updated_at": now}})
+    db.users.update_one({"email": target["email"]}, {"$set": {
+        "role": payload.role,
+        "expired_at": expired_at,
+        "legacy_provenance_checked": True,
+        "legacy_provenance": "admin_managed",
+        "created_source": "admin_managed",
+        "updated_at": now,
+    }})
     after = db.users.find_one({"email": target["email"]})
     _admin_audit(db, actor["email"], target["email"], "role_changed", before, after)
     return _serialize_account(after)

@@ -40,10 +40,12 @@ beforeEach(async () => {
     await db.doc('allowed_users/user@example.com').set({
       email: USER_EMAIL, role: 'user',
       expiresAt: Timestamp.fromMillis(Date.now() + 2 * 86400000),
+      createdBy: ADMIN_EMAIL, createdSource: 'admin_console', updatedBy: ADMIN_EMAIL,
     });
     await db.doc('allowed_users/nguyenanhtuan081196@gmail.com').set({
       email: ADMIN_EMAIL, role: 'admin',
       expiresAt: Timestamp.fromMillis(Date.now() + 30 * 86400000),
+      createdBy: ADMIN_EMAIL, createdSource: 'admin_console', updatedBy: ADMIN_EMAIL,
     });
   });
 });
@@ -62,19 +64,19 @@ test('a user can read only their own account document', async () => {
   await assertSucceeds(signedIn(USER_EMAIL).doc('allowed_users/user@example.com').get());
   await assertFails(signedIn(USER_EMAIL).doc('allowed_users/other@example.com').get());
 });
-test('only the fixed admin email can list account records, even when unverified', async () => {
+test('only the fixed verified admin email can list account records', async () => {
   await assertFails(signedIn(USER_EMAIL).collection('allowed_users').get());
-  await assertSucceeds(signedIn(ADMIN_EMAIL, 'admin-unverified', false).collection('allowed_users').get());
+  await assertFails(signedIn(ADMIN_EMAIL, 'admin-unverified', false).collection('allowed_users').get());
   await assertSucceeds(signedIn(ADMIN_EMAIL, 'admin-verified', true).collection('allowed_users').get());
 });
-test('a user can create only their own seven-day user record', async () => {
+test('users cannot create any allowed_users document, including their own', async () => {
   const db = signedIn(OTHER_EMAIL);
-  await assertSucceeds(db.doc('allowed_users/other@example.com').set({
+  await assertFails(db.doc('allowed_users/other@example.com').set({
     email: OTHER_EMAIL, role: 'user',
     expiresAt: Timestamp.fromMillis(Date.now() + 6 * 86400000),
   }));
 });
-test('self-registration rejects admin role, extra fields, past expiry, and expiry beyond seven days', async () => {
+test('non-admin self-registration attempts are rejected regardless of requested role or expiry', async () => {
   const ref = signedIn(OTHER_EMAIL).doc('allowed_users/other@example.com');
   const future = Timestamp.fromMillis(Date.now() + 6 * 86400000);
   await assertFails(ref.set({ email: OTHER_EMAIL, role: 'admin', expiresAt: future }));
@@ -98,16 +100,21 @@ test('users cannot update or delete account records', async () => {
   }));
   await assertFails(db.doc('allowed_users/user@example.com').delete());
 });
-test('admin can extend expiry, update role, and revoke access without deleting the record', async () => {
+test('verified Admin can create and update only Admin-provenance legacy records', async () => {
   const db = signedIn(ADMIN_EMAIL, 'admin-verified', true);
-  await assertSucceeds(db.doc('allowed_users/user@example.com').update({
-    expiresAt: Timestamp.fromMillis(Date.now() + 30 * 86400000),
+  const ref = db.doc('allowed_users/other@example.com');
+  const expiresAt = Timestamp.fromMillis(Date.now() + 30 * 86400000);
+  await assertSucceeds(ref.set({
+    email: OTHER_EMAIL, role: 'user', expiresAt,
+    createdBy: ADMIN_EMAIL, createdSource: 'admin_console', updatedBy: ADMIN_EMAIL,
   }));
-  await assertSucceeds(db.doc('allowed_users/user@example.com').update({ role: 'admin' }));
-  await assertSucceeds(db.doc('allowed_users/user@example.com').update({
-    expiresAt: Timestamp.fromMillis(0),
+  await assertSucceeds(ref.update({
+    expiresAt: Timestamp.fromMillis(Date.now() + 60 * 86400000),
+    updatedBy: ADMIN_EMAIL,
   }));
-  await assertFails(db.doc('allowed_users/user@example.com').delete());
+  await assertSucceeds(ref.update({ role: 'admin', updatedBy: ADMIN_EMAIL }));
+  await assertFails(ref.update({ createdBy: OTHER_EMAIL }));
+  await assertFails(ref.delete());
 });
 test('watchlists are restricted to the owning Firebase UID', async () => {
   const owner = signedIn(USER_EMAIL, 'owner-uid');

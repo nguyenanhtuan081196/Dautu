@@ -13,6 +13,7 @@ class FakeDocument:
     def __init__(self, data=None):
         self.exists = data is not None
         self._data = data
+        self.create_time = datetime.now(timezone.utc)
 
     def to_dict(self):
         return self._data
@@ -52,6 +53,8 @@ class FakeMongoUsers:
         email = query["email"]
         if email not in self.records and upsert:
             self.records[email] = dict(update.get("$setOnInsert", {}))
+        elif email in self.records and "$set" in update:
+            self.records[email].update(update["$set"])
 
 
 class RequireUserTests(unittest.TestCase):
@@ -72,6 +75,9 @@ class RequireUserTests(unittest.TestCase):
                 "email": "user@example.com",
                 "role": "user",
                 "expiresAt": datetime.now(timezone.utc) + timedelta(days=2),
+                "createdBy": main.ADMIN_EMAIL,
+                "createdSource": "admin_console",
+                "updatedBy": main.ADMIN_EMAIL,
             })
         )
         self.app_patch = patch("app.api.main._firebase_app", return_value=self.app)
@@ -103,6 +109,90 @@ class RequireUserTests(unittest.TestCase):
                 main.require_user("Bearer token")
         self.assertEqual(error.exception.status_code, 403)
 
+    def test_unverified_mongo_user_is_rejected_even_with_active_subscription(self):
+        self.mongo.users.records["user@example.com"] = {
+            "email": "user@example.com",
+            "firebase_uid": "uid-123",
+            "role": "user",
+            "status": "active",
+            "expired_at": datetime.now(timezone.utc) + timedelta(days=30),
+            "created_source": "admin_managed",
+            "legacy_provenance_checked": True,
+        }
+        with patch(
+            "app.api.main.firebase_auth.verify_id_token",
+            return_value={**self.valid_claims, "email_verified": False},
+        ):
+            with self.assertRaises(HTTPException) as error:
+                main.require_user("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(error.exception.detail, "Email verification is required")
+
+    def test_untrusted_legacy_self_created_record_is_provisioned_as_guest(self):
+        self.firebase = FakeFirestore(FakeDocument({
+            "email": "user@example.com",
+            "role": "user",
+            "expiresAt": datetime.now(timezone.utc) + timedelta(days=30),
+        }))
+        with patch("app.api.main.firestore.client", return_value=self.firebase):
+            claims = main.require_guest("Bearer token")
+        account = self.mongo.users.records["user@example.com"]
+        self.assertEqual(claims["app_role"], "guest")
+        self.assertEqual(account["role"], "guest")
+        self.assertIsNone(account["expired_at"])
+        self.assertEqual(account["legacy_provenance"], "untrusted_or_unmarked")
+
+    def test_admin_provenance_legacy_record_can_be_migrated(self):
+        self.firebase = FakeFirestore(FakeDocument({
+            "email": "user@example.com",
+            "role": "user",
+            "expiresAt": datetime.now(timezone.utc) + timedelta(days=30),
+            "createdBy": main.ADMIN_EMAIL,
+            "createdSource": "admin_console",
+            "updatedBy": main.ADMIN_EMAIL,
+        }))
+        with patch("app.api.main.firestore.client", return_value=self.firebase):
+            claims = main.require_user("Bearer token")
+        self.assertEqual(claims["app_role"], "user")
+        self.assertEqual(self.mongo.users.records["user@example.com"]["legacy_provenance"], "admin_created")
+
+    def test_previously_migrated_untrusted_account_is_downgraded_immediately(self):
+        self.mongo.users.records["user@example.com"] = {
+            "email": "user@example.com",
+            "firebase_uid": "uid-123",
+            "role": "user",
+            "status": "active",
+            "expired_at": datetime.now(timezone.utc) + timedelta(days=30),
+            "created_source": "firestore_migration",
+        }
+        self.firebase = FakeFirestore(FakeDocument({
+            "email": "user@example.com",
+            "role": "user",
+            "expiresAt": datetime.now(timezone.utc) + timedelta(days=30),
+        }))
+        with patch("app.api.main.firestore.client", return_value=self.firebase):
+            claims = main.require_guest("Bearer token")
+        account = self.mongo.users.records["user@example.com"]
+        self.assertEqual(claims["app_role"], "guest")
+        self.assertEqual(account["role"], "guest")
+        self.assertEqual(account["created_source"], "firestore_untrusted_legacy")
+        self.assertTrue(account["legacy_provenance_checked"])
+
+    def test_firebase_uid_mismatch_is_rejected(self):
+        self.mongo.users.records["user@example.com"] = {
+            "email": "user@example.com",
+            "firebase_uid": "different-uid",
+            "role": "user",
+            "status": "active",
+            "expired_at": datetime.now(timezone.utc) + timedelta(days=30),
+            "created_source": "admin_managed",
+            "legacy_provenance_checked": True,
+        }
+        with self.assertRaises(HTTPException) as error:
+            main.require_user("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertIn("identity does not match", error.exception.detail)
+
     def test_missing_membership_is_rejected(self):
         self.firebase = FakeFirestore(FakeDocument())
         with patch(
@@ -115,7 +205,13 @@ class RequireUserTests(unittest.TestCase):
     def test_expired_subscription_is_rejected(self):
         expired = datetime.now(timezone.utc) - timedelta(seconds=1)
         self.firebase = FakeFirestore(
-            FakeDocument({"role": "user", "expiresAt": expired})
+            FakeDocument({
+                "role": "user",
+                "expiresAt": expired,
+                "createdBy": main.ADMIN_EMAIL,
+                "createdSource": "admin_console",
+                "updatedBy": main.ADMIN_EMAIL,
+            })
         )
         with patch(
             "app.api.main.firestore.client", return_value=self.firebase
@@ -174,7 +270,7 @@ class RequireUserTests(unittest.TestCase):
         self.assertEqual(claims["app_role"], "user")
         self.assertEqual(self.firebase.collection_ref.requested_email, "user@example.com")
 
-    def test_fixed_admin_is_authorized_without_expiry(self):
+    def test_fixed_admin_is_authorized_without_expiry_when_email_is_verified(self):
         admin_email = main.ADMIN_EMAIL
         self.firebase = FakeFirestore(FakeDocument({"role": "admin"}))
         with patch(
@@ -189,6 +285,19 @@ class RequireUserTests(unittest.TestCase):
         ):
             claims = main.require_user("Bearer token")
         self.assertEqual(claims["app_role"], "admin")
+
+    def test_unverified_bootstrap_admin_is_rejected(self):
+        with patch(
+            "app.api.main.firebase_auth.verify_id_token",
+            return_value={
+                "uid": "admin-uid",
+                "email": main.ADMIN_EMAIL,
+                "email_verified": False,
+            },
+        ):
+            with self.assertRaises(HTTPException) as error:
+                main.require_user("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
 
     def test_admin_role_for_another_email_is_rejected(self):
         self.firebase = FakeFirestore(FakeDocument({"role": "admin"}))
