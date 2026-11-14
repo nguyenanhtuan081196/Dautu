@@ -146,9 +146,8 @@ class RequireUserTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 403)
 
     def test_admin_dependency_rejects_user_role(self):
-        claims = main.require_guest("Bearer token")
         with self.assertRaises(HTTPException) as error:
-            main.require_admin(claims)
+            main.require_admin("Bearer token")
         self.assertEqual(error.exception.status_code, 403)
 
     def test_locked_mongo_account_is_rejected(self):
