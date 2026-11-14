@@ -119,33 +119,27 @@ Kiến trúc được giữ tách biệt:
 ### A. Đăng ký SSI FastConnect và tạo credentials
 
 1. Cần có tài khoản chứng khoán SSI đang hoạt động.
-2. Truy cập [SSI Developer Portal](https://developers.ssi.com.vn/) và tạo/
-   đăng nhập tài khoản Developer theo hướng dẫn **Registration & Activation**.
-3. Hoàn tất điều khoản đăng ký FastConnect. Chọn môi trường **Production**
-   khi chuẩn bị chạy dữ liệu thật; UAT và Production có credentials tách biệt.
-4. Tạo một API Key riêng cho Dautu. Chỉ cấp scope/quyền **Market Data /
-   streaming dữ liệu thị trường** cần thiết. Không cấp Trading, đặt lệnh,
-   tài khoản hoặc portfolio permissions.
-5. Lưu lại đúng ba giá trị do Developer Portal cấp:
+2. Truy cập [SSI Developer Portal](https://developers.ssi.com.vn/) và đăng nhập bằng tài khoản SSI. Nếu FastConnect chưa được kích hoạt, làm theo quy trình đăng ký chính thức; tài liệu SSI hướng dẫn liên hệ chi nhánh/PGD hoặc hotline 1900 54 54 71 để đăng ký dịch vụ và hoàn tất xác nhận.
+3. Sau khi FastConnect được kích hoạt, vào **Dashboard → API Key Management → Create New Key**. Chọn Production khi chuẩn bị dùng dữ liệu thật; UAT và Production có credentials riêng.
+4. Tạo một API Key riêng cho Dautu, chỉ cấp scope **Market Data** cần thiết. Không cấp Trading, đặt lệnh, tài khoản hoặc portfolio permissions.
+5. Lưu các credentials SSI cấp:
    - `Client ID` → `SSI_CLIENT_ID`
    - `API Key` → `SSI_API_KEY`
    - `API Secret` → `SSI_API_SECRET`
-6. API Secret thường chỉ hiển thị khi tạo key. Lưu ngay vào nơi quản lý bí mật
-   an toàn; không gửi qua chat, email thường, commit Git hoặc đưa vào file
-   README. Nếu lộ, thu hồi/xoá key cũ và tạo key mới.
+   Nếu màn hình tạo key chỉ hiển thị API Key và API Secret mà không có Client ID, hỏi SSI hỗ trợ xác nhận Client ID tương ứng cho SDK; không tự lấy số tài khoản chứng khoán hoặc tự suy đoán giá trị này.
+6. API Secret chỉ hiển thị một lần theo hướng dẫn SSI. Lưu ngay vào nơi quản lý bí mật an toàn; không gửi qua chat, email thường, commit Git hoặc đưa vào file README. Nếu lộ, thu hồi/xoá key cũ và tạo key mới.
 
 Tài liệu SSI chính thức:
 
 - [Tổng quan FastConnect và điều kiện đăng ký](https://developers.ssi.com.vn/docs/getting-started/overview)
-- [Quy trình đăng ký và kích hoạt](https://developers.ssi.com.vn/en/docs/getting-started/registration)\n- [Tạo và quản lý API Key](https://developers.ssi.com.vn/en/docs/getting-started/api-keys)\n- [Điều kiện sử dụng và môi trường UAT/Production](https://developers.ssi.com.vn/docs/getting-started/terms-and-environments)
+- [Quy trình đăng ký và kích hoạt](https://developers.ssi.com.vn/en/docs/getting-started/registration)
+- [Tạo và quản lý API Key](https://developers.ssi.com.vn/en/docs/getting-started/api-keys)
+- [Điều kiện sử dụng và môi trường UAT/Production](https://developers.ssi.com.vn/docs/getting-started/terms-and-environments)
 - [Python SDK 3.3.2](https://developers.ssi.com.vn/en/docs/sdk/python/overview)
 - [WebSocket Market Data](https://developers.ssi.com.vn/en/docs/tutorials/websocket-data)
 - [Cấu hình SDK, reconnect và retry](https://developers.ssi.com.vn/en/docs/sdk/python/configuration)
 
-> Lưu ý: Bộ key của tài liệu FastConnect/iBoard phiên bản cũ
-> (`ConsumerID`, `ConsumerSecret`, `PrivateKey`) không đồng nhất với bộ
-> credentials của SDK/API v3 đang được tích hợp ở đây. Không điền nhầm
-> ConsumerID/PrivateKey vào ba biến `SSI_*` trên.
+> Lưu ý: Bộ key của tài liệu FastConnect/iBoard phiên bản cũ (`ConsumerID`, `ConsumerSecret`, `PrivateKey`) không đồng nhất với bộ credentials của SDK/API v3 đang được tích hợp ở đây. Không điền nhầm ConsumerID/PrivateKey vào ba biến `SSI_*` trên.
 
 ### B. Cấu hình biến môi trường trên Render
 
