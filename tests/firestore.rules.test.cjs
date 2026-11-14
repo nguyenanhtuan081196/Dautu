@@ -67,9 +67,9 @@ test('only the fixed admin email can list account records, even when unverified'
   await assertSucceeds(signedIn(ADMIN_EMAIL, 'admin-unverified', false).collection('allowed_users').get());
   await assertSucceeds(signedIn(ADMIN_EMAIL, 'admin-verified', true).collection('allowed_users').get());
 });
-test('a user can create only their own seven-day user record', async () => {
+test('ordinary users cannot create allowed_users records, even for their own email', async () => {
   const db = signedIn(OTHER_EMAIL);
-  await assertSucceeds(db.doc('allowed_users/other@example.com').set({
+  await assertFails(db.doc('allowed_users/other@example.com').set({
     email: OTHER_EMAIL, role: 'user',
     expiresAt: Timestamp.fromMillis(Date.now() + 6 * 86400000),
   }));
@@ -98,16 +98,19 @@ test('users cannot update or delete account records', async () => {
   }));
   await assertFails(db.doc('allowed_users/user@example.com').delete());
 });
-test('admin can extend expiry, update role, and revoke access without deleting the record', async () => {
+test('only Admin can create, update, or delete allowed_users records', async () => {
   const db = signedIn(ADMIN_EMAIL, 'admin-verified', true);
+  await assertSucceeds(db.doc('allowed_users/other@example.com').set({
+    email: OTHER_EMAIL,
+    role: 'user',
+    expiresAt: Timestamp.fromMillis(Date.now() + 30 * 86400000),
+    created_by: ADMIN_EMAIL,
+  }));
   await assertSucceeds(db.doc('allowed_users/user@example.com').update({
     expiresAt: Timestamp.fromMillis(Date.now() + 30 * 86400000),
   }));
   await assertSucceeds(db.doc('allowed_users/user@example.com').update({ role: 'admin' }));
-  await assertSucceeds(db.doc('allowed_users/user@example.com').update({
-    expiresAt: Timestamp.fromMillis(0),
-  }));
-  await assertFails(db.doc('allowed_users/user@example.com').delete());
+  await assertSucceeds(db.doc('allowed_users/user@example.com').delete());
 });
 test('watchlists are restricted to the owning Firebase UID', async () => {
   const owner = signedIn(USER_EMAIL, 'owner-uid');
