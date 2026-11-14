@@ -71,3 +71,13 @@
 ## Transitional compatibility note
 
 The existing browser Admin modal still edits Firestore directly. Because PR 1 makes MongoDB authoritative after first migration, those legacy edits will not update already-migrated MongoDB records. Do not use the legacy modal to change roles or expiry after PR 1 is deployed; PR 2 replaces it with Admin APIs and the dedicated dashboard. This is explicitly called out to avoid a false impression that the old and new account stores remain bidirectionally synchronized.
+
+
+## Emergency registration hardening (security follow-up)
+
+- Firestore Rules deny all client writes to `allowed_users` except the fixed Admin identity. User-owned read access remains unchanged; listing remains Admin-only.
+- New Firebase registrations are provisioned as Guest by the API. They do not need, and must not create, a Firestore membership document.
+- A legacy Firestore `role=user` record is eligible for migration only when it contains `created_by: "nguyenanhtuan081196@gmail.com"` and a valid timestamp `expiresAt`. Records without this explicit provenance (including old records whose creator cannot be proven) are migrated as Guest with no expiry.
+- The fixed bootstrap Admin remains recognized only for the configured Admin email and an explicit legacy `role=admin` record.
+- Firebase ID-token `email_verified` is checked at request time. An unverified identity cannot access User APIs even if MongoDB contains an active User record.
+- This migration is intentionally fail-closed: historical Firestore User records without provenance may need the Admin to re-grant User access through the MongoDB-backed Admin Dashboard after rollout.
