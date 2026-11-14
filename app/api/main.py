@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import smtplib
 import threading
@@ -23,6 +24,7 @@ from app.database.mongo import ensure_indexes, get_database, ping_database
 from app.database.repositories import get_metadata
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _allowed_origins() -> list[str]:
@@ -293,6 +295,15 @@ def db_dependency() -> Database:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def metadata_db_dependency() -> Database | None:
+    """Metadata is non-critical UI data; DB connection failures use safe defaults."""
+    try:
+        return get_database()
+    except Exception:
+        logger.exception("Unable to obtain MongoDB connection for price metadata")
+        return None
+
+
 async def startup() -> None:
     """Initialize Atlas and launch the price scheduler without blocking API requests."""
     global _price_scheduler_task
@@ -331,16 +342,32 @@ def healthz() -> dict[str, str]:
 def price_metadata(
     response: Response,
     _: dict[str, Any] = Depends(require_user),
-    db: Database = Depends(db_dependency),
+    db: Database | None = Depends(metadata_db_dependency),
 ) -> dict[str, Any]:
     """Return the latest Atlas price-sync timestamp and outcome without caching."""
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
-    document = db.app_metadata.find_one(
-        {"_id": "price_sync"},
-        {"_id": 0, "key": 0, "updated_at": 0},
-    ) or {}
+    fallback = {
+        "last_updated": None,
+        "status": "unknown",
+        "symbols_total": 0,
+        "symbols_success": 0,
+        "symbols_failed": 0,
+    }
+    if db is None:
+        return fallback
+    try:
+        document = db.app_metadata.find_one(
+            {"_id": "price_sync"},
+            {"_id": 0, "key": 0, "updated_at": 0},
+        ) or {}
+    except Exception:
+        # Metadata is supplementary UI information: Atlas read failures must
+        # not break the main frontend or expose database details to clients.
+        logger.exception("Unable to read price-sync metadata from MongoDB")
+        return fallback
+
     return {
         "last_updated": document.get("last_updated"),
         "status": document.get("status", "unknown"),

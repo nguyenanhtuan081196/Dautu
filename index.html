@@ -529,7 +529,7 @@
             </div>
 
             <div class="bg-slate-950 px-3 py-2 border-t border-slate-800 flex justify-between items-center text-xs">
-                <span class="text-slate-400"><i class="fa-regular fa-clock mr-1 text-emerald-400"></i> Giá cập nhật lần cuối: <strong class="text-white">09/11/2026 18:25:05</strong></span>
+                <span class="text-slate-400"><i class="fa-regular fa-clock mr-1 text-emerald-400"></i> Giá cập nhật lần cuối: <strong id="chart-price-update-time" class="text-white">Đang cập nhật...</strong></span>
                 <div class="flex gap-2">
                     <button type="button" id="btn-view-ai" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition font-semibold flex items-center gap-1.5">
                         <i class="fa-solid fa-robot"></i> Xem AI chi tiết
@@ -558,9 +558,17 @@
             const user = auth.currentUser;
             if (!user) throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
             const token = await user.getIdToken();
-            const response = await fetch(API_BASE_URL + path, {
+            // Every data request gets a unique URL so intermediaries and browser
+            // caches cannot reuse an earlier API response.
+            const requestUrl = new URL(path, API_BASE_URL);
+            requestUrl.searchParams.set('_ts', String(Date.now()));
+            const response = await fetch(requestUrl.toString(), {
                 method: 'GET',
-                headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+                headers: {
+                    'Authorization': 'Bearer ' + token,
+                    'Accept': 'application/json',
+                    'Cache-Control': 'no-cache'
+                },
                 cache: 'no-store'
             });
             if (!response.ok) {
@@ -1095,30 +1103,28 @@
         }
 
         async function loadPriceMetadata() {
-            const label = document.getElementById('price-update-time');
-            if (!label) return;
-            label.textContent = 'Đang cập nhật...';
+            const labels = [
+                document.getElementById('price-update-time'),
+                document.getElementById('chart-price-update-time')
+            ].filter(Boolean);
+            if (!labels.length) return;
+            const setLabels = value => labels.forEach(label => { label.textContent = value; });
+            setLabels('Đang cập nhật...');
             try {
                 const metadata = await apiFetch('/api/metadata');
                 const rawTimestamp = metadata && metadata.last_updated;
-                if (!rawTimestamp) {
-                    label.textContent = 'Đang cập nhật...';
-                    return;
-                }
+                if (!rawTimestamp) return;
                 const parsedDate = new Date(rawTimestamp);
-                if (Number.isNaN(parsedDate.getTime())) {
-                    label.textContent = 'Đang cập nhật...';
-                    return;
-                }
-                label.textContent = parsedDate.toLocaleString('vi-VN', {
+                if (Number.isNaN(parsedDate.getTime())) return;
+                setLabels(parsedDate.toLocaleString('vi-VN', {
                     timeZone: 'Asia/Ho_Chi_Minh',
                     day: '2-digit', month: '2-digit', year: 'numeric',
                     hour: '2-digit', minute: '2-digit', second: '2-digit',
                     hour12: false
-                });
+                }));
             } catch (error) {
                 console.warn('Không thể tải metadata cập nhật giá:', error);
-                label.textContent = 'Đang cập nhật...';
+                setLabels('Đang cập nhật...');
             }
         }
 
