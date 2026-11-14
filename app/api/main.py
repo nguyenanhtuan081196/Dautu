@@ -896,7 +896,10 @@ app = create_app(
 
 @app.middleware("http")
 async def log_http_request(request: Request, call_next):
-    """Log request arrival and completion, including CORS preflight requests."""
+    """Log mail-related requests and CORS preflight without flooding routine API logs."""
+    tracked_paths = {"/api/auth/send-verification", "/api/test-send-mail"}
+    if request.method != "OPTIONS" and request.url.path not in tracked_paths:
+        return await call_next(request)
     started = time.monotonic()
     logger.info("http_request_started method=%s path=%s", request.method, request.url.path)
     try:
