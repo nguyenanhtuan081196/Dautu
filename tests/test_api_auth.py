@@ -118,7 +118,11 @@ class RequireUserTests(unittest.TestCase):
     def test_expired_subscription_is_rejected(self):
         expired = datetime.now(timezone.utc) - timedelta(seconds=1)
         self.firebase = FakeFirestore(
-            FakeDocument({"role": "user", "expiresAt": expired})
+            FakeDocument({
+                "role": "user",
+                "expiresAt": expired,
+                "created_by": main.ADMIN_EMAIL,
+            })
         )
         with patch(
             "app.api.main.firestore.client", return_value=self.firebase
