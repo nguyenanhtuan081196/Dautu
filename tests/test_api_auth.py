@@ -132,6 +132,25 @@ class RequireUserTests(unittest.TestCase):
             main.require_user("Bearer token")
         self.assertEqual(error.exception.status_code, 403)
 
+    def test_mongo_role_is_authoritative_after_legacy_migration(self):
+        self.mongo.users.records["user@example.com"] = {
+            "email": "user@example.com",
+            "role": "guest",
+            "status": "active",
+            "expired_at": None,
+        }
+        claims = main.require_guest("Bearer token")
+        self.assertEqual(claims["app_role"], "guest")
+        with self.assertRaises(HTTPException) as error:
+            main.require_user("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
+
+    def test_admin_dependency_rejects_user_role(self):
+        claims = main.require_guest("Bearer token")
+        with self.assertRaises(HTTPException) as error:
+            main.require_admin(claims)
+        self.assertEqual(error.exception.status_code, 403)
+
     def test_locked_mongo_account_is_rejected(self):
         self.mongo.users.records["user@example.com"] = {
             "email": "user@example.com",
