@@ -19,25 +19,9 @@ service cloud.firestore {
     match /allowed_users/{email} {
       allow get: if isAdmin() || isOwner(email);
       allow list: if isAdmin();
-      allow create: if isSignedIn()
-        && isOwner(email)
-        && request.resource.data.keys().hasAll(['email', 'role', 'expiresAt'])
-        && request.resource.data.keys().hasOnly(['email', 'role', 'expiresAt'])
-        && request.resource.data.email is string
-        && request.resource.data.email.lower() == email.lower()
-        && request.resource.data.role == 'user'
-        && request.resource.data.expiresAt is timestamp
-        && request.resource.data.expiresAt > request.time
-        && request.resource.data.expiresAt <= request.time + duration.value(7, 'd');
-      allow update: if isAdmin()
-        && request.resource.data.keys().hasAll(['email', 'role', 'expiresAt'])
-        && request.resource.data.keys().hasOnly(['email', 'role', 'expiresAt'])
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.role in ['user', 'admin']
-        && request.resource.data.expiresAt is timestamp;
-      // Client-side account deletion is intentionally disabled. Admins revoke access
-      // by setting expiresAt to a past timestamp; this prevents self-recreation.
-      allow delete: if false;
+      // Account membership is managed only by the trusted Admin identity.
+      // Firebase client registration must never create or mutate authorization records.
+      allow create, update, delete: if isAdmin();
     }
     match /watchlists/{uid} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
