@@ -8,3 +8,4 @@ fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
 firebase-admin>=6.5,<8
 server-platform @ git+https://github.com/nguyenanhtuan081196/server-platform.git@b928015c10a332fa783e76e9160db2e9336d6085
+ssi-sdk>=3.3.2,<4
