@@ -74,7 +74,7 @@ def list_users(
         if isinstance(expires_at, datetime) and expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         status = item.get("status", "active")
-        if expires_at is None or expires_at <= now:
+        if item.get("role", "user") != "admin" and (expires_at is None or expires_at <= now):
             status = "expired" if status == "active" else status
         users.append({
             "email": item.get("email"),
