@@ -72,6 +72,7 @@ class RequireUserTests(unittest.TestCase):
                 "email": "user@example.com",
                 "role": "user",
                 "expiresAt": datetime.now(timezone.utc) + timedelta(days=2),
+                "created_by": main.ADMIN_EMAIL,
             })
         )
         self.app_patch = patch("app.api.main._firebase_app", return_value=self.app)
@@ -151,6 +152,44 @@ class RequireUserTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:
             main.require_admin("Bearer token")
         self.assertEqual(error.exception.status_code, 403)
+
+    def test_legacy_user_without_admin_provenance_is_downgraded_to_guest(self):
+        self.firebase = FakeFirestore(FakeDocument({
+            "email": "user@example.com",
+            "role": "user",
+            "expiresAt": datetime.now(timezone.utc) + timedelta(days=2),
+        }))
+        with patch("app.api.main.firestore.client", return_value=self.firebase):
+            claims = main.require_guest("Bearer token")
+        account = self.mongo.users.records["user@example.com"]
+        self.assertEqual(claims["app_role"], "guest")
+        self.assertEqual(account["role"], "guest")
+        self.assertEqual(account["created_source"], "firestore_untrusted_guest")
+        self.assertIsNone(account["expired_at"])
+
+    def test_legacy_user_with_admin_provenance_is_migrated_as_user(self):
+        claims = main.require_user("Bearer token")
+        self.assertEqual(claims["app_role"], "user")
+        self.assertEqual(
+            self.mongo.users.records["user@example.com"]["created_source"],
+            "firestore_admin_migration",
+        )
+
+    def test_existing_mongo_user_with_unverified_firebase_email_is_rejected(self):
+        self.mongo.users.records["user@example.com"] = {
+            "email": "user@example.com",
+            "role": "user",
+            "status": "active",
+            "expired_at": datetime.now(timezone.utc) + timedelta(days=2),
+        }
+        with patch(
+            "app.api.main.firebase_auth.verify_id_token",
+            return_value={**self.valid_claims, "email_verified": False},
+        ):
+            with self.assertRaises(HTTPException) as error:
+                main.require_user("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(error.exception.detail, "Email verification is required")
 
     def test_locked_mongo_account_is_rejected(self):
         self.mongo.users.records["user@example.com"] = {
