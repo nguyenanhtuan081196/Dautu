@@ -259,33 +259,72 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
     if not account.exists:
         raise HTTPException(status_code=403, detail="Account is not authorized")
     account_data = account.to_dict() or {}
-    role = account_data.get("role")
-
-    if role == "admin":
-        # Bypass verification only for the designated Admin email and an existing
-        # Firestore profile explicitly carrying role=admin.
-        if email != ADMIN_EMAIL:
-            raise HTTPException(status_code=403, detail="Admin role is not authorized for this account")
-        claims["app_role"] = "admin"
-        return claims
-
-    # Every ordinary User must verify their email before API access.
-    if claims.get("email_verified") is not True:
-        raise HTTPException(status_code=403, detail="Email verification is required")
-
-    if role != "user":
-        raise HTTPException(status_code=403, detail="Account role is not authorized")
-
+    firestore_role = account_data.get("role")
     expires_at = account_data.get("expiresAt")
     if not isinstance(expires_at, datetime):
         raise HTTPException(status_code=403, detail="Account subscription expiry is invalid")
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at <= datetime.now(timezone.utc):
-        raise HTTPException(status_code=403, detail="Account subscription has expired")
+
+    # MongoDB is the application account-state registry. Existing Firestore
+    # memberships are provisioned lazily, preserving all current accounts.
+    try:
+        db = get_database()
+        db.users.update_one(
+            {"email": email},
+            {
+                "$setOnInsert": {
+                    "email": email,
+                    "firebase_uid": str(claims.get("uid") or claims.get("sub") or ""),
+                    "created_at": datetime.now(timezone.utc),
+                    "status": "active",
+                    "role": firestore_role,
+                },
+                "$set": {
+                    "expired_at": expires_at,
+                    "updated_at": datetime.now(timezone.utc),
+                },
+            },
+            upsert=True,
+        )
+        user_record = db.users.find_one({"email": email}) or {}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Account authorization service unavailable") from exc
+
+    if user_record.get("status", "active") != "active":
+        raise HTTPException(status_code=403, detail="Account is locked")
+
+    role = user_record.get("role", firestore_role)
+    if role == "admin":
+        # The original fixed Admin remains the bootstrap identity. Additional
+        # Admins must have been explicitly promoted through the Admin API.
+        if email != ADMIN_EMAIL and claims.get("email_verified") is not True:
+            raise HTTPException(status_code=403, detail="Verified email is required for Admin access")
+        claims["app_role"] = "admin"
+        return claims
+
+    if claims.get("email_verified") is not True:
+        raise HTTPException(status_code=403, detail="Email verification is required")
+    if role != "user":
+        raise HTTPException(status_code=403, detail="Account role is not authorized")
+
+    mongo_expiry = user_record.get("expired_at")
+    if not isinstance(mongo_expiry, datetime):
+        raise HTTPException(status_code=403, detail="Account subscription expiry is invalid")
+    if mongo_expiry.tzinfo is None:
+        mongo_expiry = mongo_expiry.replace(tzinfo=timezone.utc)
+    if mongo_expiry <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Account subscription has expired")
 
     claims["app_role"] = "user"
     return claims
+
+
+def require_admin(user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    """Reject ordinary authenticated users from all administrative operations."""
+    if user.get("app_role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges are required")
+    return user
 
 
 def db_dependency() -> Database:
@@ -538,6 +577,10 @@ def get_analysis(
 
 
 # Keep the public ASGI import path stable: app.api.main:app
+# Import after auth dependencies are defined to avoid a circular import.
+from app.api.admin import router as admin_router
+
+router.include_router(admin_router)
 app = create_app(
     router=router,
     startup_handler=startup,
