@@ -268,6 +268,9 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
     # memberships are provisioned lazily, preserving all current accounts.
     try:
         db = get_database()
+        existing_user_record = db.users.find_one({"email": email})
+        if existing_user_record is None and firestore_role == "admin" and email != ADMIN_EMAIL:
+            raise HTTPException(status_code=403, detail="Admin role must be granted through the Admin API")
         db.users.update_one(
             {"email": email},
             {
@@ -276,7 +279,7 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
                     "firebase_uid": str(claims.get("uid") or claims.get("sub") or ""),
                     "created_at": datetime.now(timezone.utc),
                     "status": "active",
-                    "role": firestore_role,
+                    "role": firestore_role if email == ADMIN_EMAIL else "user",
                 },
                 "$set": {
                     "expired_at": expires_at,
