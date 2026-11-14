@@ -15,7 +15,7 @@ from functools import lru_cache
 from typing import Any, Literal
 
 import firebase_admin
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, Field
 from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
@@ -24,6 +24,7 @@ from app.core.application import create_app
 from app.core.config import get_allowed_hosts, get_allowed_origins
 from app.database.mongo import ensure_indexes, get_database, ping_database
 from app.database.repositories import get_metadata
+from app.services.email_rate_limit import MongoEmailRateLimiter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -97,29 +98,6 @@ def _safe_projection(fields: tuple[str, ...]) -> dict[str, int]:
     return {"_id": 0, **{field: 1 for field in fields}}
 
 
-_verification_send_state: dict[str, list[float]] = {}
-_verification_send_lock = threading.Lock()
-VERIFICATION_SEND_LIMIT = 3
-VERIFICATION_SEND_WINDOW_SECONDS = 3600
-
-
-def _check_verification_send_limit(email: str) -> None:
-    now = time.monotonic()
-    with _verification_send_lock:
-        recent = [
-            stamp for stamp in _verification_send_state.get(email, [])
-            if now - stamp < VERIFICATION_SEND_WINDOW_SECONDS
-        ]
-        if len(recent) >= VERIFICATION_SEND_LIMIT:
-            raise HTTPException(
-                status_code=429,
-                detail="Anh đã yêu cầu gửi email quá nhiều lần. Vui lòng thử lại sau một giờ.",
-                headers={"Retry-After": "3600"},
-            )
-        recent.append(now)
-        _verification_send_state[email] = recent
-
-
 def _send_gmail_verification(recipient: str, verification_url: str) -> None:
     smtp_user = os.getenv("SMTP_USER", "").strip()
     smtp_password = os.getenv("SMTP_APP_PASSWORD", "").replace(" ", "").strip()
@@ -168,7 +146,10 @@ def _firebase_app():
 
 
 @router.post("/api/auth/send-verification")
-def send_verification_email(authorization: str | None = Header(default=None)) -> dict[str, str]:
+def send_verification_email(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, str]:
     """Generate a Firebase verification link and deliver it through Gmail SMTP.
 
     The caller must already be signed in to Firebase, but the email does not need
@@ -192,7 +173,23 @@ def send_verification_email(authorization: str | None = Header(default=None)) ->
     if claims.get("email_verified") is True:
         raise HTTPException(status_code=409, detail="Email này đã được xác minh.")
 
-    _check_verification_send_limit(email)
+    # MongoDB is the shared source of truth across workers, instances and restarts.
+    # The counters record send attempts (including provider failures) to prevent
+    # repeated SMTP/provider work from being used to bypass the quota.
+    try:
+        MongoEmailRateLimiter(get_database()).check(
+            email=email,
+            ip_address=request.client.host if request.client else "unknown",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unable to enforce Gmail verification rate limit")
+        raise HTTPException(
+            status_code=503,
+            detail="Dịch vụ gửi email tạm thời không khả dụng. Vui lòng thử lại sau.",
+        ) from exc
+
     frontend_url = os.getenv("FRONTEND_URL", "https://mimohouse.ddns.net").strip()
     try:
         action_settings = firebase_auth.ActionCodeSettings(

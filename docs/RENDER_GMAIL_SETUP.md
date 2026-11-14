@@ -51,4 +51,11 @@ Firebase vẫn quản lý tài khoản, mật khẩu và trạng thái xác minh
 
 ## Giới hạn chống lạm dụng
 
-Endpoint yêu cầu Firebase ID token hợp lệ, chỉ gửi đến email gắn với token (không nhận email tùy ý từ trình duyệt), và giới hạn tối đa 3 lần gửi mỗi email trong một giờ trên mỗi tiến trình Render. Khi tăng số instance, nên chuyển bộ đếm giới hạn sang kho dùng chung.
+Endpoint yêu cầu Firebase ID token hợp lệ và chỉ gửi đến email gắn với token (không nhận email tùy ý từ trình duyệt). Bộ đếm được lưu trong MongoDB Atlas collection `email_rate_limits`, không nằm trong RAM của tiến trình:
+
+- Mỗi tài khoản: 1 lần thử gửi trong 60 giây và tối đa 3 lần thử trong 3.600 giây.
+- Mỗi IP: 10 lần thử/phút và 30 lần thử/giờ để tránh khóa nhầm nhiều người dùng chung mạng NAT.
+- Mỗi lần thử được ghi nhận bằng MongoDB `$inc`; request vượt giới hạn nhận HTTP 429 và `Retry-After`.
+- Bộ đếm tồn tại qua lần restart và giữa nhiều instance Render. MongoDB TTL index tự dọn dữ liệu hết hạn.
+
+Các cửa sổ hiện là fixed UTC windows; quota tính cả lần thử gửi thất bại để tránh lạm dụng retry. Chi tiết kỹ thuật nằm trong `docs/GMAIL_RATE_LIMITS.md`.

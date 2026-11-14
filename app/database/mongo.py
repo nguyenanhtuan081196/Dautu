@@ -88,3 +88,10 @@ def ensure_indexes(db: Database | None = None) -> None:
     db.users.create_index([("email", ASCENDING)], unique=True)
     db.users.create_index([("firebase_uid", ASCENDING)], unique=True, sparse=True)
     db.users.create_index([("role", ASCENDING), ("status", ASCENDING)])
+    # Expire fixed-window email rate-limit counters after their window plus
+    # a short retention period; the counters themselves live in MongoDB.
+    db.email_rate_limits.create_index(
+        [("expires_at", ASCENDING)],
+        expireAfterSeconds=0,
+        name="email_rate_limits_ttl",
+    )
