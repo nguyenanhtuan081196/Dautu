@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import smtplib
 import threading
 import time
@@ -375,6 +376,13 @@ def require_admin(authorization: str | None = Header(default=None)) -> dict[str,
         raise HTTPException(status_code=403, detail="Admin privileges are required")
     return user
 
+
+
+def db_dependency() -> Database:
+    try:
+        return get_database()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 class AdminStatusUpdate(BaseModel):
