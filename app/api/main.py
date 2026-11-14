@@ -273,23 +273,39 @@ def _get_or_create_account(claims: dict[str, Any]) -> dict[str, Any]:
             return account
 
         legacy, created_at = _legacy_membership(email)
+        # Firestore Rules now permit writes only by the fixed Admin identity.
+        # A legacy User record is trusted only when it carries the explicit
+        # Admin provenance marker. Old/self-created or unverifiable documents
+        # are deliberately downgraded to Guest (fail closed).
+        trusted_admin_created = (
+            legacy is not None
+            and str(legacy.get("created_by", "")).strip().lower() == ADMIN_EMAIL
+        )
         if legacy is None:
             role, expired_at = "guest", None
         else:
-            legacy_role = legacy.get("role", "user")
-            if legacy_role == "admin":
-                if email != ADMIN_EMAIL:
-                    raise HTTPException(
-                        status_code=403, detail="Admin role is not authorized for this account"
-                    )
-                role = "admin"
-            elif legacy_role == "user":
-                role = "user"
+            legacy_role = legacy.get("role")
+            if legacy_role == "admin" and email == ADMIN_EMAIL:
+                # Preserve the single bootstrap Admin identity.
+                role, expired_at = "admin", None
+            elif legacy_role == "user" and trusted_admin_created:
+                candidate_expiry = legacy.get("expiresAt")
+                if isinstance(candidate_expiry, datetime):
+                    role, expired_at = "user", candidate_expiry
+                else:
+                    role, expired_at = "guest", None
             else:
-                raise HTTPException(status_code=403, detail="Account role is not authorized")
-            expired_at = legacy.get("expiresAt")
+                role, expired_at = "guest", None
+
             if isinstance(expired_at, datetime) and expired_at.tzinfo is None:
                 expired_at = expired_at.replace(tzinfo=timezone.utc)
+
+        if legacy is None:
+            created_source = "firebase_guest"
+        elif role == "user" or role == "admin":
+            created_source = "firestore_admin_migration"
+        else:
+            created_source = "firestore_untrusted_guest"
 
         document = {
             "email": email,
@@ -298,7 +314,7 @@ def _get_or_create_account(claims: dict[str, Any]) -> dict[str, Any]:
             "expired_at": expired_at,
             "role": role,
             "status": "active",
-            "created_source": "firestore_migration" if legacy is not None else "firebase_guest",
+            "created_source": created_source,
             "updated_at": datetime.now(timezone.utc),
         }
         try:
@@ -364,6 +380,10 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
     user = require_guest(authorization)
     if user.get("app_role") not in {"user", "admin"}:
         raise HTTPException(status_code=403, detail="A User subscription is required")
+    # Defense in depth: never grant paid User API access from a stale or
+    # manually altered MongoDB role if the current Firebase identity is unverified.
+    if user.get("app_role") == "user" and user.get("email_verified") is not True:
+        raise HTTPException(status_code=403, detail="Email verification is required")
     if user.get("app_role") == "user" and user.get("account_expired_at") is None:
         raise HTTPException(status_code=403, detail="Account subscription expiry is invalid")
     return user
