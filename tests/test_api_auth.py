@@ -40,10 +40,36 @@ class FakeFirestore:
         return self.collection_ref
 
 
+class FakeMongoUsers:
+    def __init__(self):
+        self.items = {}
+
+    def update_one(self, query, update, upsert=False):
+        email = query["email"]
+        item = self.items.get(email)
+        if item is None and upsert:
+            item = dict(update.get("$setOnInsert", {}))
+            self.items[email] = item
+        if item is not None:
+            item.update(update.get("$set", {}))
+
+    def find_one(self, query):
+        return self.items.get(query["email"])
+
+
+class FakeMongoDatabase:
+    def __init__(self):
+        self.users = FakeMongoUsers()
+
+
 class RequireUserTests(unittest.TestCase):
     def setUp(self):
         main._rate_limit_state.clear()
         self.app = object()
+        self.mongo = FakeMongoDatabase()
+        self.mongo_patch = patch("app.api.main.get_database", return_value=self.mongo)
+        self.mongo_patch.start()
+        self.addCleanup(self.mongo_patch.stop)
         self.valid_claims = {
             "uid": "uid-123",
             "email": "user@example.com",
@@ -104,7 +130,7 @@ class RequireUserTests(unittest.TestCase):
         ):
             with self.assertRaises(HTTPException) as error:
                 main.require_user("Bearer token")
-        self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(error.exception.status_code, 401)
 
     def test_active_user_is_authorized_and_email_is_normalized(self):
         claims = main.require_user("Bearer token")
