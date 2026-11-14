@@ -43,6 +43,9 @@ class MetadataFirestore:
             "email": "test-user@example.com",
             "role": "user",
             "expiresAt": datetime.now(timezone.utc) + timedelta(days=1),
+            "createdBy": main.ADMIN_EMAIL,
+            "createdSource": "admin_console",
+            "updatedBy": main.ADMIN_EMAIL,
         }
 
 
