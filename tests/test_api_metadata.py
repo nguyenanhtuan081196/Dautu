@@ -47,7 +47,7 @@ class MetadataFirestore:
 
 
 class PriceMetadataApiTests(unittest.TestCase):
-    def _get(self, document=None, error=None):
+    def _get(self, document=None, error=None, db_error=None):
         db = SimpleNamespace(app_metadata=MetadataCollection(document, error=error))
         claims = {
             "uid": "test-user",
@@ -59,7 +59,7 @@ class PriceMetadataApiTests(unittest.TestCase):
             patch("app.api.main._firebase_app", return_value=object()),
             patch("app.api.main.firebase_auth.verify_id_token", return_value=claims),
             patch("app.api.main.firestore.client", return_value=MetadataFirestore()),
-            patch("app.api.main.get_database", return_value=db),
+            patch("app.api.main.get_database", side_effect=db_error) if db_error else patch("app.api.main.get_database", return_value=db),
             patch.dict("os.environ", {"PRICE_SCHEDULER_ENABLED": "false"}),
             patch("app.core.application.close_client"),
         ):
@@ -89,6 +89,18 @@ class PriceMetadataApiTests(unittest.TestCase):
         self.assertIn("no-cache", response.headers.get("Cache-Control", ""))
         self.assertEqual(response.headers.get("Pragma"), "no-cache")
 
+
+
+    def test_database_connection_error_returns_safe_fallback(self):
+        response = self._get(db_error=ConnectionError("Atlas connection failed"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "last_updated": None,
+            "status": "unknown",
+            "symbols_total": 0,
+            "symbols_success": 0,
+            "symbols_failed": 0,
+        })
 
     def test_database_read_error_returns_safe_fallback(self):
         response = self._get(error=ConnectionError("Atlas unavailable"))
