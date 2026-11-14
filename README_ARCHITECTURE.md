@@ -7,141 +7,91 @@ This document describes the production-oriented architecture after moving operat
 ## 1. System at a glance
 
 ```text
-                    GitHub repository (main)
-                   source code + CI + frontend
-                     |                 |
-             Render auto-deploy     GitHub Actions
-                     |             (tests / Pages /
-                     v              manual DB tools)
-             Render: dautu-api
-             FastAPI + Uvicorn
-             Free web service
-             - authenticated read API
-             - in-process price Scheduler
-             - bounded background batches
-                     |
-                     | MongoDB connection (MONGODB_URI)
-                     v
-              MongoDB Atlas / dautu
-              operational source of truth
-              stocks, price_history, financial_reports,
-              screener_results, ai_analyses, simulations,
-              pipeline_runs, dataset_versions, app_metadata
-                     ^
-                     |
-        Browser frontend (GitHub Pages static site)
-        index.html + login.html + chart library
-        Firebase Authentication / Firestore membership
+GitHub repository (source + CI + frontend)
+        |                         |
+        | Render auto-deploy      | GitHub Actions
+        v                         | (CI / Pages / manual recovery)
+Render: dautu-api                 |
+FastAPI + Uvicorn                 |
+- authenticated read API         |
+- in-process price Scheduler     |
+- bounded background batches     |
+        |                         |
+        v                         |
+MongoDB Atlas / dautu <-----------+
+operational source of truth
+stocks, price_history, financial_reports,
+screener_results, ai_analyses, simulations,
+pipeline_runs, dataset_versions, app_metadata
 
-External availability monitor (UptimeRobot, configured outside this repo)
-        └── probes the public Render /healthz endpoint
+Browser frontend (GitHub Pages static site)
+        |
+        +--> authenticated Render API --> MongoDB Atlas
+
+UptimeRobot (external monitor) --> public Render /healthz
 ```
 
-**Source of truth:** MongoDB Atlas is the durable operational data store. Render's filesystem and GitHub are not used as the live stock-data database. GitHub stores application source, frontend assets, migration snapshots and CI definitions.
+**Source of truth:** MongoDB Atlas is the durable operational data store. Render's filesystem and GitHub are not used as the live stock-data database.
 
-## 2. Runtime and deployment
+## 2. Render API and deployment
 
-- **API service:** Render web service `dautu-api`, FastAPI/Uvicorn, production origin `https://dautu-api.onrender.com`.
-- **Deployment source:** the `main` branch of this repository. Render Auto-Deploy is expected to deploy merged commits; confirm each deployment reaches **Live** in the Render dashboard.
-- **Health probe:** `GET /healthz` (also supports HEAD) pings MongoDB and returns HTTP 200 with `{"status":"ok"}` only when Atlas is reachable; otherwise it returns HTTP 503.
-- **Frontend:** static website deployed by `.github/workflows/pages.yml` to GitHub Pages. The workflow builds an allowlisted site from `index.html`, `login.html`, `lightweight-charts.js`, `CNAME` and a generated `api-config.js`. The API origin is supplied by the Actions variable `DAUTU_API_BASE_URL` (defaults to the production API origin).
-- **Authentication:** Firebase Authentication provides browser sign-in; the API verifies Firebase ID tokens with Firebase Admin and checks membership in Firestore. Stock and metadata endpoints are authenticated. The health probe is intentionally public and reveals no infrastructure detail.
+- Render web service: `dautu-api`, FastAPI/Uvicorn, production origin `https://dautu-api.onrender.com`.
+- Merged commits on `main` are deployed by Render Auto-Deploy; confirm each deployment reaches **Live** in Render.
+- `GET /healthz` checks Atlas connectivity and returns HTTP 200 only when the database is reachable.
+- The static frontend is deployed by `.github/workflows/pages.yml`; its API origin is configured by the `DAUTU_API_BASE_URL` Actions variable.
+- Firebase Authentication provides browser sign-in. The API verifies Firebase ID tokens and checks membership in Firestore.
 
-## 3. Price Scheduler on Render Free
+## 3. Render Free Scheduler and automatic Metadata
 
-The price Scheduler is an **in-process asyncio task inside the FastAPI web service**, not a Render Cron Job or a separate worker.
+The price Scheduler is an **in-process asyncio task inside the FastAPI web service**, not a paid Render Cron Job or a separate worker.
 
-- Startup in `app/api/main.py` creates the task when `PRICE_SCHEDULER_ENABLED` is true (default: true). It is cancelled during graceful shutdown.
-- `app/pipeline/scheduler.py` polls every 60 seconds by default (`PRICE_SCHEDULER_POLL_SECONDS`) and schedules the latest due **Monday–Friday** run at `PRICE_SYNC_TIME`, default **20:30 Asia/Ho_Chi_Minh**.
-- The crawler is called with `asyncio.to_thread`, so blocking VNstock/pandas work does not run on the ASGI event loop and API requests can continue to be served.
-- `app/pipeline/price_job.py` processes symbols in bounded batches: default 5, configurable through `PRICE_BATCH_SIZE`, clamped to 1–10. It releases Python memory between batches with garbage collection.
-- Each scheduled run is recorded in Atlas `pipeline_runs` using a date-based run ID. A 30-minute lease prevents duplicate workers from claiming an active run. Successful dates are not repeated; after a process restart, the Scheduler checks Atlas and can recover the latest due weekday that has not succeeded.
-- The job writes per-symbol data and its final outcome directly to Atlas. The latest price result is written to `app_metadata` under `_id: "price_sync"`.
+- FastAPI startup creates the scheduler task when `PRICE_SCHEDULER_ENABLED` is true (default true); shutdown cancels it.
+- It polls every 60 seconds by default (`PRICE_SCHEDULER_POLL_SECONDS`) and schedules Monday–Friday at `PRICE_SYNC_TIME`, default **20:30 Asia/Ho_Chi_Minh**.
+- The crawler runs via `asyncio.to_thread`; it processes 5 symbols per batch by default and is capped at 10 (`PRICE_BATCH_SIZE`).
+- Atlas `pipeline_runs` stores durable checkpoints and a 30-minute lease. Partial/failed runs are retried from confirmed saved symbols.
+- **Metadata is Scheduler-owned.** After a complete successful crawl, the Scheduler calls `ensure_price_metadata` to publish `app_metadata/_id=price_sync` from the durable successful pipeline run.
+- If the process stops after the crawl commits success but before Metadata is written, the next poll/restart detects the successful `pipeline_runs` record and repairs Metadata without rerunning the crawler.
+- If a crawl is partial or fails, Metadata is not published for that attempt; the date remains eligible for recovery. Once recovery completes successfully, Metadata is published automatically.
+- Metadata writes are idempotent: the same run is not rewritten; a newer timestamp is never replaced by an older recovery; an older Metadata record advances to the newer successful run.
+- `.github/workflows/backfill-price-metadata.yml` remains available as a manual emergency fallback. It is not part of the normal daily data path.
 
-### Free-instance limitation
+### Render Free limitations
 
-The Scheduler exists only while the Render web process is running. A Free instance can sleep or restart; an in-process timer cannot execute while the process is stopped. On restart, the Atlas run ledger supports recovery of the latest due weekday, but this is not the same as an always-on, independently hosted scheduler. Do not treat an HTTP health probe as proof that a scheduled price job completed.
+- The Scheduler runs only while the Render web process is alive. Free services may sleep or restart, so exact wall-clock execution is not guaranteed.
+- On startup/wake, the scheduler recovers the latest due weekday from Atlas. UptimeRobot health pings can provide monitoring/wake-up traffic, but do not guarantee continuous process uptime or exact schedule execution.
+- Keep the service at one instance unless a distributed scheduler/lock strategy is introduced; Atlas leases prevent duplicate claims for the same run.
+- Memory use is constrained by the 512 MB Free instance: bounded batches, background threads and garbage collection are intentional.
 
-Relevant environment settings (values belong in Render's Environment page, never in Git):
-- `MONGODB_URI` – Atlas connection string (secret).
-- `MONGODB_DATABASE` – database name; defaults to `dautu`.
-- `FIREBASE_SERVICE_ACCOUNT_JSON` – Firebase Admin service-account JSON (secret).
-- `PRICE_SCHEDULER_ENABLED` – defaults to `true`.
-- `PRICE_SYNC_TIME` – defaults to `20:30` Vietnam time.
-- `PRICE_SCHEDULER_POLL_SECONDS` – defaults to 60 seconds, minimum 15.
-- `PRICE_BATCH_SIZE` – defaults to 5, clamped to 1–10.
-- `PRICE_SESSIONS` – crawler lookback, defaults to 30.
+## 4. MongoDB Atlas
 
-## 4. MongoDB Atlas data model
+Atlas database: `dautu`. Operational collections include:
 
-Database: `dautu` (selected by `MONGODB_DATABASE`).
+- `stocks`, `price_history`, `financial_reports`
+- `screener_results`, `ai_analyses`, `simulations`
+- `pipeline_runs`, `dataset_versions`, `app_metadata`
 
-| Collection | Purpose |
-| --- | --- |
-| `stocks` | Current per-symbol fundamentals and latest price fields |
-| `price_history` | D1/W1/MN history, keyed by symbol + interval + date |
-| `financial_reports` | Balance sheet, income statement and cash-flow reports |
-| `screener_results` | Current quantitative screener output |
-| `ai_analyses` | AI analysis by symbol |
-| `simulations` | Historical-return / quarterly-mean simulation results |
-| `pipeline_runs` | Durable job status, progress, checkpoints and leases |
-| `dataset_versions` | Dataset publication/version metadata |
-| `app_metadata` | UI timestamps and other small metadata values |
+The API reads live data from Atlas; Render's local filesystem is not the operational database.
 
-The website reads the API; it does not read these collections directly.
+## 5. UptimeRobot
 
-### Price update timestamp
-
-1. The price job completes (or records a failed/partial outcome).
-2. It writes `last_updated`, `status`, symbol counts and run ID to `app_metadata` document `_id: "price_sync"`.
-3. The authenticated `GET /api/metadata` route reads that document and sends no-cache response headers.
-4. The frontend's `loadPriceMetadata()` displays `last_updated` in `Asia/Ho_Chi_Minh` time.
-
-A missing or unreadable metadata document returns safe fallback values; it does not block the stock list API.
-
-## 5. UptimeRobot / external availability monitoring
-
-UptimeRobot is an external monitor and is configured outside this Git repository. The intended probe target is the public Render health endpoint:
-
-`https://dautu-api.onrender.com/healthz`
-
-The endpoint checks Atlas connectivity, so an alert can reveal an API/database availability problem. A periodic monitor request may wake a sleeping Render Free instance, but it does **not** execute the price crawler, does not prove the Scheduler is enabled, and is not a guarantee that the process stays awake at 20:30. The exact monitor URL, interval, alert contacts and current status must be verified in the UptimeRobot dashboard; they are not represented as code configuration here.
+UptimeRobot is configured outside this repository. Its intended role is to monitor the public `/healthz` endpoint. Dashboard URL, probe interval and current monitor status must be verified in the UptimeRobot account; this repository cannot prove those external settings. A health ping is not a guarantee that the in-process Scheduler remains awake at the scheduled minute.
 
 ## 6. GitHub Actions responsibilities
 
-GitHub Actions is for code quality, frontend publishing, controlled migration/verification and explicitly manual maintenance—not the recurring production price schedule.
+- `python-tests.yml`: Python tests, compile checks, Quant Screener smoke test and Firestore Rules Emulator.
+- `render-production-smoke.yml`: post-CI production `/healthz` check.
+- `pages.yml`: build and publish the static frontend.
+- `mongodb-import.yml`: manual legacy JSON-to-Atlas migration (dry-run/apply with confirmation).
+- `mongodb-verify.yml`: manual Atlas connectivity/collection verification.
+- `backfill-price-metadata.yml`: manual emergency Metadata recovery only; normal daily publication is handled by Render Scheduler.
 
-| Workflow | Trigger / responsibility |
-| --- | --- |
-| `Python tests` | Pull requests and pushes to `main`; Python tests, compile check, authentication tests, Quant Screener JSON smoke test and Firestore Rules Emulator tests |
-| `Render production smoke check` | After successful main-branch Python tests, or manual dispatch; checks `/healthz` only |
-| `Deploy secure Dautu frontend` | Frontend asset changes on `main`, or manual dispatch; publishes the allowlisted GitHub Pages site |
-| `Import legacy JSON to MongoDB` | Manual dry-run/apply workflow; apply requires the explicit `IMPORT_TO_ATLAS` confirmation |
-| `MongoDB Atlas verification` | Manual read-only connectivity and collection-count check |
-| `Backfill price metadata (2026-11-13)` | Manual one-time metadata backfill for the successful 13 November pipeline run; not part of daily scheduling |
+GitHub Actions does **not** run the regular daily price crawler.
 
-Normal weekday price collection is performed by the Render in-process Scheduler, not by GitHub Actions.
+## 7. Configuration names (never store secret values here)
 
-## 7. Legacy JSON and repository cleanup policy
+- `MONGODB_URI`, `MONGODB_DATABASE` (normally `dautu`)
+- `PRICE_SCHEDULER_ENABLED`, `PRICE_SCHEDULER_POLL_SECONDS`
+- `PRICE_SYNC_TIME`, `PRICE_BATCH_SIZE`, `PRICE_SESSIONS`
+- Firebase Admin service-account configuration (secret JSON or supported file configuration)
 
-The application runtime and API use Atlas for operational reads/writes. However, the repository still contains migration and CI input snapshots that are **not yet safe to delete**:
-
-- `data.json` is read by the Quant Screener's `--smoke-test-json` CI mode and by `scripts/migrate_json_to_mongo.py`.
-- `screener_results.json`, `symbol_sim_rates.json`, `quarterly_mean_details.json` and `last_update.json` are read by the JSON-to-Atlas migration script.
-- `bctc_data/*.json` and `history/*.json` are also migration inputs.
-- `mongodb-import.yml` remains an explicit manual migration workflow. Keep its source snapshots until the migration/fallback path is formally retired and the retained data has been independently validated in Atlas.
-
-Generated Python bytecode and cache directories are excluded by `.gitignore` (`__pycache__/`, `*.py[cod]`, `.pytest_cache/`). No root `__pycache__` directory is present on the reviewed `main` tree; the previously tracked simulator bytecode was removed in the metadata-backfill cleanup. Do not delete migration JSON merely to reduce repository size while the import workflow still depends on it.
-
-## 8. Operational checks
-
-For a suspected missed update, verify in this order:
-
-1. Render service is **Live** and the latest deploy is healthy.
-2. Render application logs show Scheduler startup and a scheduled price-sync start/finish for the expected date.
-3. Atlas `pipeline_runs` has `price_sync:YYYY-MM-DD` with `status: succeeded`, expected symbol totals and `completed_at`.
-4. Atlas `app_metadata` document `_id: "price_sync"` has a matching/newer `last_updated` and successful counts.
-5. Authenticated `GET /api/metadata`, `GET /api/stocks` and `GET /api/screener` return expected data; the frontend timestamp is displayed in Vietnam time.
-6. Check UptimeRobot separately for availability history; do not use an uptime ping as evidence of a successful data pipeline.
-
-Operational runbook: [docs/production-operations.md](docs/production-operations.md).
+Never commit database URIs, Firebase private keys or other credentials.
