@@ -354,8 +354,9 @@ def require_guest(authorization: str | None = Header(default=None)) -> dict[str,
     return claims
 
 
-def require_user(user: dict[str, Any] = Depends(require_guest)) -> dict[str, Any]:
+def require_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Paid data access: User or Admin; guests are restricted to basic endpoints."""
+    user = require_guest(authorization)
     if user.get("app_role") not in {"user", "admin"}:
         raise HTTPException(status_code=403, detail="A User subscription is required")
     if user.get("app_role") == "user" and user.get("account_expired_at") is None:
@@ -363,8 +364,9 @@ def require_user(user: dict[str, Any] = Depends(require_guest)) -> dict[str, Any
     return user
 
 
-def require_admin(user: dict[str, Any] = Depends(require_guest)) -> dict[str, Any]:
+def require_admin(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Administrative access is reserved for explicit Admin accounts."""
+    user = require_guest(authorization)
     if user.get("app_role") != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges are required")
     return user
