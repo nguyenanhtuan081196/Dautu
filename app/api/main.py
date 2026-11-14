@@ -261,9 +261,7 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
     account_data = account.to_dict() or {}
     firestore_role = account_data.get("role")
     expires_at = account_data.get("expiresAt")
-    if not isinstance(expires_at, datetime):
-        raise HTTPException(status_code=403, detail="Account subscription expiry is invalid")
-    if expires_at.tzinfo is None:
+    if isinstance(expires_at, datetime) and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
     # MongoDB is the application account-state registry. Existing Firestore
