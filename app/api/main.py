@@ -215,19 +215,13 @@ def send_verification_email(authorization: str | None = Header(default=None)) ->
 ADMIN_EMAIL = "nguyenanhtuan081196@gmail.com"
 
 
-def require_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    """Authenticate a Firebase user and enforce the server-side membership record.
-
-    Firestore rules protect browser access, but the Admin SDK bypasses those rules;
-    therefore every API request must independently enforce verification, role and
-    subscription expiry here.
-    """
+def _verify_firebase_token(authorization: str | None) -> dict[str, Any]:
+    """Verify Firebase identity; account authorization is handled separately."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
         raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
-
     try:
         claims = firebase_auth.verify_id_token(
             token, app=_firebase_app(), check_revoked=True
@@ -239,53 +233,141 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
 
     email = claims.get("email")
     if not isinstance(email, str) or not email.strip():
-        raise HTTPException(status_code=403, detail="A verified email address is required")
-    email = email.strip().lower()
+        raise HTTPException(status_code=403, detail="A valid account email is required")
+    claims["email"] = email.strip().lower()
+    return claims
 
-    # Apply the quota before the Firestore membership lookup so repeated calls
-    # from one Firebase identity cannot hammer the authorization store.
-    _enforce_user_rate_limit(str(claims.get("uid") or claims.get("sub") or email))
 
+def _legacy_membership(email: str) -> tuple[dict[str, Any] | None, datetime]:
+    """Read the legacy Firestore allow-list only when an account is first provisioned."""
     try:
-        account = (
+        snapshot = (
             firestore.client(app=_firebase_app())
             .collection("allowed_users")
             .document(email)
             .get()
         )
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Account authorization service unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Account authorization service unavailable"
+        ) from exc
+    if not snapshot.exists:
+        return None, datetime.now(timezone.utc)
+    data = snapshot.to_dict() or {}
+    created_at = getattr(snapshot, "create_time", None) or datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return data, created_at
 
-    if not account.exists:
-        raise HTTPException(status_code=403, detail="Account is not authorized")
-    account_data = account.to_dict() or {}
-    role = account_data.get("role")
 
-    if role == "admin":
-        # Bypass verification only for the designated Admin email and an existing
-        # Firestore profile explicitly carrying role=admin.
-        if email != ADMIN_EMAIL:
-            raise HTTPException(status_code=403, detail="Admin role is not authorized for this account")
-        claims["app_role"] = "admin"
-        return claims
+def _get_or_create_account(claims: dict[str, Any]) -> dict[str, Any]:
+    """Use MongoDB as the live account registry; migrate legacy Firestore users once."""
+    email = claims["email"]
+    uid = str(claims.get("uid") or claims.get("sub") or "")
+    try:
+        db = get_database()
+        account = db.users.find_one({"email": email})
+        if account is not None:
+            return account
 
-    # Every ordinary User must verify their email before API access.
-    if claims.get("email_verified") is not True:
-        raise HTTPException(status_code=403, detail="Email verification is required")
+        legacy, created_at = _legacy_membership(email)
+        if legacy is None:
+            role, expired_at = "guest", None
+        else:
+            legacy_role = legacy.get("role", "user")
+            if legacy_role == "admin":
+                if email != ADMIN_EMAIL:
+                    raise HTTPException(
+                        status_code=403, detail="Admin role is not authorized for this account"
+                    )
+                role = "admin"
+            elif legacy_role == "user":
+                role = "user"
+            else:
+                raise HTTPException(status_code=403, detail="Account role is not authorized")
+            expired_at = legacy.get("expiresAt")
+            if isinstance(expired_at, datetime) and expired_at.tzinfo is None:
+                expired_at = expired_at.replace(tzinfo=timezone.utc)
 
-    if role != "user":
+        document = {
+            "email": email,
+            "firebase_uid": uid,
+            "created_at": created_at,
+            "expired_at": expired_at,
+            "role": role,
+            "status": "active",
+            "created_source": "firestore_migration" if legacy is not None else "firebase_guest",
+            "updated_at": datetime.now(timezone.utc),
+        }
+        try:
+            db.users.update_one(
+                {"email": email}, {"$setOnInsert": document}, upsert=True
+            )
+        except Exception:
+            # Concurrent first requests can race on the unique email index.
+            pass
+        account = db.users.find_one({"email": email})
+        if account is None:
+            raise RuntimeError("Account provisioning did not create a MongoDB record")
+        return account
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Account authorization service unavailable"
+        ) from exc
+
+
+def require_guest(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Base access: valid Firebase identity, active account and non-expired access."""
+    claims = _verify_firebase_token(authorization)
+    _enforce_user_rate_limit(
+        str(claims.get("uid") or claims.get("sub") or claims["email"])
+    )
+    account = _get_or_create_account(claims)
+
+    status = account.get("status", "active")
+    if status != "active":
+        raise HTTPException(status_code=403, detail="Account is locked")
+    role = account.get("role")
+    if role not in {"guest", "user", "admin"}:
         raise HTTPException(status_code=403, detail="Account role is not authorized")
 
-    expires_at = account_data.get("expiresAt")
-    if not isinstance(expires_at, datetime):
-        raise HTTPException(status_code=403, detail="Account subscription expiry is invalid")
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at <= datetime.now(timezone.utc):
-        raise HTTPException(status_code=403, detail="Account subscription has expired")
+    expired_at = account.get("expired_at")
+    if expired_at is not None:
+        if not isinstance(expired_at, datetime):
+            raise HTTPException(status_code=403, detail="Account expiry is invalid")
+        if expired_at.tzinfo is None:
+            expired_at = expired_at.replace(tzinfo=timezone.utc)
+        if expired_at <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=401, detail="Account subscription has expired")
 
-    claims["app_role"] = "user"
+    if claims.get("email_verified") is not True and not (
+        role == "admin" and claims["email"] == ADMIN_EMAIL
+    ):
+        raise HTTPException(status_code=403, detail="Email verification is required")
+
+    claims["app_role"] = role
+    claims["account_status"] = status
+    claims["account_created_at"] = account.get("created_at")
+    claims["account_expired_at"] = expired_at
     return claims
+
+
+def require_user(user: dict[str, Any] = Depends(require_guest)) -> dict[str, Any]:
+    """Paid data access: User or Admin; guests are restricted to basic endpoints."""
+    if user.get("app_role") not in {"user", "admin"}:
+        raise HTTPException(status_code=403, detail="A User subscription is required")
+    if user.get("app_role") == "user" and user.get("account_expired_at") is None:
+        raise HTTPException(status_code=403, detail="Account subscription expiry is invalid")
+    return user
+
+
+def require_admin(user: dict[str, Any] = Depends(require_guest)) -> dict[str, Any]:
+    """Administrative access is reserved for explicit Admin accounts."""
+    if user.get("app_role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges are required")
+    return user
 
 
 def db_dependency() -> Database:
@@ -416,7 +498,7 @@ def get_realtime_price(
 
 @router.get("/api/status")
 def status(
-    _: dict[str, Any] = Depends(require_user),
+    _: dict[str, Any] = Depends(require_guest),
     db: Database = Depends(db_dependency),
 ) -> dict[str, Any]:
     return {
@@ -427,7 +509,7 @@ def status(
 
 @router.get("/api/stocks")
 def list_stocks(
-    _: dict[str, Any] = Depends(require_user),
+    _: dict[str, Any] = Depends(require_guest),
     db: Database = Depends(db_dependency),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[dict[str, Any]]:
@@ -437,7 +519,7 @@ def list_stocks(
 @router.get("/api/stocks/{symbol}")
 def get_stock(
     symbol: str = Path(..., min_length=1, max_length=20, pattern=r"(?i)^[A-Z0-9][A-Z0-9._-]{0,19}$"),
-    _: dict[str, Any] = Depends(require_user),
+    _: dict[str, Any] = Depends(require_guest),
     db: Database = Depends(db_dependency),
 ) -> dict[str, Any]:
     doc = db.stocks.find_one({"_id": symbol.upper()}, _safe_projection(STOCK_RESPONSE_FIELDS))
