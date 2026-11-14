@@ -132,6 +132,23 @@ class RequireUserTests(unittest.TestCase):
                 main.require_user("Bearer token")
         self.assertEqual(error.exception.status_code, 401)
 
+    def test_locked_user_is_rejected(self):
+        self.mongo.users.items["user@example.com"] = {
+            "email": "user@example.com",
+            "role": "user",
+            "status": "locked",
+            "expired_at": datetime.now(timezone.utc) + timedelta(days=2),
+        }
+        with self.assertRaises(HTTPException) as error:
+            main.require_user("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
+
+    def test_require_admin_rejects_ordinary_user(self):
+        claims = main.require_user("Bearer token")
+        with self.assertRaises(HTTPException) as error:
+            main.require_admin(claims)
+        self.assertEqual(error.exception.status_code, 403)
+
     def test_active_user_is_authorized_and_email_is_normalized(self):
         claims = main.require_user("Bearer token")
         self.assertEqual(claims["app_role"], "user")
@@ -186,7 +203,12 @@ class RequireUserTests(unittest.TestCase):
                     getattr(dep.call, "__name__", None)
                     for dep in route.dependant.dependencies
                 }
-                self.assertIn("require_user", dependency_names)
+                self.assertTrue(
+                    {"require_user", "require_admin"} & dependency_names,
+                    "Every protected route must require a User or Admin dependency",
+                )
+                if route.path.startswith("/api/admin/"):
+                    self.assertIn("require_admin", dependency_names)
 
     def test_simulation_routes_are_authenticated(self):
         routes = [
