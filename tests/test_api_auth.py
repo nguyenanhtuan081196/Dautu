@@ -52,6 +52,8 @@ class FakeMongoUsers:
         email = query["email"]
         if email not in self.records and upsert:
             self.records[email] = dict(update.get("$setOnInsert", {}))
+        elif email in self.records and "$set" in update:
+            self.records[email].update(update["$set"])
 
 
 class RequireUserTests(unittest.TestCase):
@@ -147,6 +149,27 @@ class RequireUserTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:
             main.require_user("Bearer token")
         self.assertEqual(error.exception.status_code, 403)
+
+    def test_previously_migrated_unproven_user_is_downgraded_immediately(self):
+        self.mongo.users.records["user@example.com"] = {
+            "email": "user@example.com",
+            "role": "user",
+            "status": "active",
+            "expired_at": datetime.now(timezone.utc) + timedelta(days=2),
+            "created_source": "firestore_migration",
+        }
+        self.firebase = FakeFirestore(FakeDocument({
+            "email": "user@example.com",
+            "role": "user",
+            "expiresAt": datetime.now(timezone.utc) + timedelta(days=2),
+        }))
+        with patch("app.api.main.firestore.client", return_value=self.firebase):
+            claims = main.require_guest("Bearer token")
+        account = self.mongo.users.records["user@example.com"]
+        self.assertEqual(claims["app_role"], "guest")
+        self.assertEqual(account["role"], "guest")
+        self.assertEqual(account["created_source"], "firestore_untrusted_guest")
+        self.assertIsNone(account["expired_at"])
 
     def test_admin_dependency_rejects_user_role(self):
         with self.assertRaises(HTTPException) as error:
