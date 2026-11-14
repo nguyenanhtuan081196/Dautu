@@ -11,6 +11,7 @@ service cloud.firestore {
       // Only the fixed Admin identity may access Admin-managed Firestore data
       // without email verification. Ordinary users remain subject to verification.
       return isSignedIn()
+        && request.auth.token.email_verified == true
         && userEmail() == 'nguyenanhtuan081196@gmail.com';
     }
     function isOwner(email) {
