@@ -22,9 +22,12 @@ class FakeCollection:
     def insert_one(self, document):
         self.documents[document["_id"]] = document
 
-    def update_one(self, query, update):
+    def update_one(self, query, update, upsert=False):
         self.updated.append((query, update))
         doc = self.documents.get(query.get("_id"))
+        if doc is None and upsert:
+            doc = {"_id": query.get("_id")}
+            self.documents[query.get("_id")] = doc
         if doc:
             doc.update(update.get("$set", {}))
 
@@ -88,7 +91,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
     @patch("fetch_data_local.main")
     def test_run_executes_five_symbol_batches_and_records_atlas_progress(self, crawler_main, get_db):
         collection = FakeCollection()
-        db = SimpleNamespace(pipeline_runs=collection)
+        db = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
         get_db.return_value = db
         def fake_crawler(argv, *, on_symbol_saved=None):
             symbols = argv[1].split(",")
@@ -110,6 +113,10 @@ class RenderFreePriceJobTests(unittest.TestCase):
         self.assertEqual(result["symbols_success"], 12)
         self.assertEqual([call.args[0][1].count(",") + 1 for call in crawler_main.call_args_list], [5, 5, 2])
         self.assertEqual(collection.documents["price_sync:2026-11-13"]["status"], "succeeded")
+        metadata = get_db.return_value.app_metadata.documents["price_sync"]
+        self.assertEqual(metadata["status"], "succeeded")
+        self.assertEqual(metadata["symbols_success"], 12)
+        self.assertIsNotNone(metadata["last_updated"])
 
     @patch("app.database.job_io.database")
     @patch("fetch_data_local.main")
@@ -121,7 +128,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
             "successful_symbols": ["FPT"],
             "started_at": datetime.now(timezone.utc),
         }
-        get_db.return_value = SimpleNamespace(pipeline_runs=collection)
+        get_db.return_value = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
 
         def save_remaining(argv, *, on_symbol_saved):
             symbols = argv[1].split(",")
@@ -145,7 +152,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
     @patch("fetch_data_local.main")
     def test_late_batch_error_preserves_confirmed_atlas_symbol_writes(self, crawler_main, get_db):
         collection = FakeCollection()
-        get_db.return_value = SimpleNamespace(pipeline_runs=collection)
+        get_db.return_value = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
 
         def save_then_fail(argv, *, on_symbol_saved):
             on_symbol_saved("FPT")
@@ -168,7 +175,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
             "_id": "price_sync:2026-11-13",
             "status": "succeeded",
         }
-        get_db.return_value = SimpleNamespace(pipeline_runs=collection)
+        get_db.return_value = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
         from app.pipeline.price_job import run_price_job
 
         result = run_price_job(symbols=["FPT"], scheduled_for="2026-11-13")

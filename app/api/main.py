@@ -13,7 +13,7 @@ from functools import lru_cache
 from typing import Any
 
 import firebase_admin
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Response
 from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
 
@@ -325,6 +325,29 @@ def healthz() -> dict[str, str]:
         return {"status": "ok"}
     except Exception:
         raise HTTPException(status_code=503, detail="Service unavailable")
+
+
+@router.get("/api/metadata")
+def price_metadata(
+    response: Response,
+    _: dict[str, Any] = Depends(require_user),
+    db: Database = Depends(db_dependency),
+) -> dict[str, Any]:
+    """Return the latest Atlas price-sync timestamp and outcome without caching."""
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    document = db.app_metadata.find_one(
+        {"_id": "price_sync"},
+        {"_id": 0, "key": 0, "updated_at": 0},
+    ) or {}
+    return {
+        "last_updated": document.get("last_updated"),
+        "status": document.get("status", "unknown"),
+        "symbols_total": document.get("symbols_total", 0),
+        "symbols_success": document.get("symbols_success", 0),
+        "symbols_failed": document.get("symbols_failed", 0),
+    }
 
 
 @router.get("/api/status")
