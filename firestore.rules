@@ -8,35 +8,44 @@ service cloud.firestore {
       return request.auth.token.email.lower();
     }
     function isAdmin() {
-      // Only the fixed Admin identity may access Admin-managed Firestore data
-      // without email verification. Ordinary users remain subject to verification.
+      // Only the fixed, verified Admin identity may manage legacy membership data.
       return isSignedIn()
+        && request.auth.token.email_verified == true
         && userEmail() == 'nguyenanhtuan081196@gmail.com';
     }
     function isOwner(email) {
       return isSignedIn() && userEmail() == email.lower();
     }
+    function validAdminManagedMembership(email) {
+      return request.resource.data.keys().hasAll([
+          'email', 'role', 'expiresAt', 'createdBy', 'createdSource', 'updatedBy'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'email', 'role', 'expiresAt', 'createdBy', 'createdSource', 'updatedBy'
+        ])
+        && request.resource.data.email is string
+        && request.resource.data.email.lower() == email.lower()
+        && request.resource.data.role in ['user', 'admin']
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.createdBy == 'nguyenanhtuan081196@gmail.com'
+        && request.resource.data.createdSource == 'admin_console'
+        && request.resource.data.updatedBy == 'nguyenanhtuan081196@gmail.com';
+    }
     match /allowed_users/{email} {
       allow get: if isAdmin() || isOwner(email);
       allow list: if isAdmin();
-      allow create: if isSignedIn()
-        && isOwner(email)
-        && request.resource.data.keys().hasAll(['email', 'role', 'expiresAt'])
-        && request.resource.data.keys().hasOnly(['email', 'role', 'expiresAt'])
-        && request.resource.data.email is string
-        && request.resource.data.email.lower() == email.lower()
-        && request.resource.data.role == 'user'
-        && request.resource.data.expiresAt is timestamp
-        && request.resource.data.expiresAt > request.time
-        && request.resource.data.expiresAt <= request.time + duration.value(7, 'd');
+
+      // No self-registration or self-promotion through Firestore. Only the
+      // verified, fixed Admin may create or edit legacy membership documents.
+      allow create: if isAdmin() && validAdminManagedMembership(email);
       allow update: if isAdmin()
-        && request.resource.data.keys().hasAll(['email', 'role', 'expiresAt'])
-        && request.resource.data.keys().hasOnly(['email', 'role', 'expiresAt'])
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.role in ['user', 'admin']
-        && request.resource.data.expiresAt is timestamp;
-      // Client-side account deletion is intentionally disabled. Admins revoke access
-      // by setting expiresAt to a past timestamp; this prevents self-recreation.
+        && validAdminManagedMembership(email)
+        && resource.data.createdBy == 'nguyenanhtuan081196@gmail.com'
+        && resource.data.createdSource == 'admin_console'
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdSource == resource.data.createdSource;
+
+      // Client-side deletion stays disabled; Admin revokes access via MongoDB APIs.
       allow delete: if false;
     }
     match /watchlists/{uid} {
