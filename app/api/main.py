@@ -282,6 +282,7 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
                     "role": firestore_role if email == ADMIN_EMAIL else "user",
                 },
                 "$set": {
+                    "role": firestore_role,
                     "expired_at": expires_at,
                     "updated_at": datetime.now(timezone.utc),
                 },
