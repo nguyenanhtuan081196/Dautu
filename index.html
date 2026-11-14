@@ -678,21 +678,10 @@
             const pass = document.getElementById('reg-password').value;
             const errBox = document.getElementById('register-error');
             errBox.classList.add('hidden');
-
             let createdUser = null;
-            let profileCreated = false;
             try {
                 const credential = await auth.createUserWithEmailAndPassword(email, pass);
                 createdUser = credential.user;
-                const expireDate = new Date();
-                expireDate.setDate(expireDate.getDate() + 7);
-                await db.collection('allowed_users').doc(email.trim().toLowerCase()).set({
-                    email: createdUser.email || email.trim(),
-                    role: 'user',
-                    // Keep this type aligned with firestore.rules and admin expiry updates.
-                    expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)
-                });
-                profileCreated = true;
                 const token = await createdUser.getIdToken(true);
                 const mailResponse = await fetch(API_BASE_URL + '/api/auth/send-verification', {
                     method: 'POST',
@@ -700,22 +689,12 @@
                 });
                 const mailPayload = await mailResponse.json().catch(() => ({}));
                 if (!mailResponse.ok) throw new Error(mailPayload.detail || 'Máy chủ không gửi được email xác minh.');
-                alert("Đăng ký thành công! Máy chủ đã gửi email xác minh. Hãy kiểm tra Inbox và Spam.");
+                alert('Đăng ký thành công! Tài khoản sẽ ở quyền Guest cho đến khi Admin cấp quyền User. Hãy xác minh email để tiếp tục.');
             } catch (err) {
-                // If Authentication succeeded but the Firestore profile failed, sign out.
-                // A later login will retry profile provisioning in onAuthStateChanged.
                 if (createdUser) {
-                    try {
-                        await auth.signOut();
-                    } catch (signOutError) {
-                        console.error("Không thể đăng xuất sau lỗi tạo hồ sơ:", signOutError);
-                    }
-                    errBox.innerText = profileCreated
-                        ? "Tài khoản và hồ sơ đã được tạo, nhưng email xác minh chưa gửi được. Anh có thể đăng nhập rồi chọn Gửi lại email xác minh. Chi tiết: " + err.message
-                        : "Tài khoản đăng nhập đã được tạo nhưng chưa lưu được hồ sơ Firestore. Anh hãy thử đăng nhập lại để hệ thống tạo hồ sơ tự động. Chi tiết: " + err.message;
-                } else {
-                    errBox.innerText = "Lỗi đăng ký: " + err.message;
-                }
+                    try { await auth.signOut(); } catch (_) {}
+                    errBox.innerText = 'Tài khoản đã tạo nhưng chưa gửi được email xác minh. Anh có thể đăng nhập và yêu cầu gửi lại. Chi tiết: ' + err.message;
+                } else errBox.innerText = 'Lỗi đăng ký: ' + err.message;
                 errBox.classList.remove('hidden');
             }
         }
@@ -733,20 +712,13 @@
             document.getElementById('acc-modal-uid').innerText = user.uid;
             document.getElementById('acc-modal-expire').innerText = 'Đang tải...';
             document.getElementById('acc-modal-role').innerText = 'Đang tải...';
-
             try {
-                const doc = await db.collection('allowed_users').doc(user.email.toLowerCase()).get();
-                if (doc.exists) {
-                    const data = doc.data();
-                    document.getElementById('acc-modal-role').innerText = (data.role || 'user').toUpperCase();
-                    const expDate = parseDate(data.expiresAt);
-                    document.getElementById('acc-modal-expire').innerText = expDate ? expDate.toLocaleDateString('vi-VN') : 'Vô thời hạn';
-                } else {
-                    document.getElementById('acc-modal-role').innerText = 'USER';
-                    document.getElementById('acc-modal-expire').innerText = 'Chưa thiết lập';
-                }
+                const account = await apiFetch('/api/auth/me');
+                document.getElementById('acc-modal-role').innerText = String(account.role || 'guest').toUpperCase();
+                document.getElementById('acc-modal-expire').innerText = account.expired_at ? new Date(account.expired_at).toLocaleDateString('vi-VN') : 'Vô thời hạn';
             } catch (err) {
                 document.getElementById('acc-modal-expire').innerText = 'Không thể tải hạn dùng';
+                document.getElementById('acc-modal-role').innerText = 'Không thể xác minh';
             }
         }
 
