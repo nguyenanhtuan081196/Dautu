@@ -189,7 +189,7 @@ class RequireUserTests(unittest.TestCase):
             route for route in main.app.routes
             if "{symbol}" in getattr(route, "path", "")
         ]
-        self.assertEqual(len(symbol_routes), 5)
+        self.assertEqual(len(symbol_routes), 6)
         for route in symbol_routes:
             with self.subTest(path=route.path):
                 parameter = next(

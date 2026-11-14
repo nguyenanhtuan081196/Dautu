@@ -95,3 +95,43 @@ GitHub Actions does **not** run the regular daily price crawler.
 - Firebase Admin service-account configuration (secret JSON or supported file configuration)
 
 Never commit database URIs, Firebase private keys or other credentials.
+
+
+## 8. Optional SSI realtime market-data collector
+
+The realtime feature is opt-in and disabled unless `ENABLE_REALTIME_CRAWLER=true`.
+When enabled, a separate in-process background task uses the official SSI FastConnect
+Python SDK (`ssi-sdk`) to connect to SSI's market-data WebSocket. API request
+handlers never call SSI; the authenticated `/api/realtime` and
+`/api/realtime/{symbol}` endpoints read only from MongoDB Atlas.
+
+- SSI market-data stream is event-driven (push), not a REST polling loop. The
+  collector subscribes to the configured Atlas stock universe in groups of
+  `SSI_STREAM_BATCH_SIZE` (default 25, capped at 50); it processes at most
+  `REALTIME_MAX_SYMBOLS` symbols (default 100).
+- Incoming trade events are coalesced by symbol in a bounded in-memory queue
+  (default 2,000 entries) and flushed to `realtime_prices` in bulk every
+  `REALTIME_FLUSH_SECONDS` (default 2 seconds). Each symbol has one latest
+  document, upserted by symbol.
+- The collector runs on weekdays during Vietnam cash-equity sessions:
+  09:00–11:30 and 13:00–15:00. It does not intentionally stream during the
+  lunch break or weekends. After 15:00 it snapshots the latest day's prices
+  into D1 documents in `price_history`.
+- A disconnect/error is retried with exponential backoff (5 seconds to a
+  maximum of 120 seconds). A full queue drops the oldest queued tick to
+  prioritize the latest price. This is a latest-price cache, not a complete
+  exchange tick archive.
+- Required Render secrets: `SSI_CLIENT_ID`, `SSI_API_KEY`,
+  `SSI_API_SECRET`. Never commit these values. The SSI account must be
+  approved for FastConnect market-data streaming. Market-data streaming is
+  configured without trading callbacks or order permissions.
+- Other safe controls: `ENABLE_REALTIME_CRAWLER=false` (default/off),
+  `SSI_STREAM_BATCH_SIZE=25`, `REALTIME_MAX_SYMBOLS=100`,
+  `REALTIME_QUEUE_MAXSIZE=2000`, and `REALTIME_FLUSH_SECONDS=2`.
+- Keep one Render instance. Multiple instances would require a distributed
+  collector lease/leader-election mechanism before enabling this feature.
+- Render Free may sleep/restart, so the in-process collector is best-effort and
+  cannot guarantee continuous realtime delivery while the process is stopped.
+  The daily D1 snapshot is based on the latest received SSI trade event; if no
+  event was received for a symbol that day, that symbol is not finalized from
+  the realtime collection.
