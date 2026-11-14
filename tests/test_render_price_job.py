@@ -3,9 +3,9 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-from app.pipeline.price_job import _chunks, _claim_run, _normalize_symbols, _utc_now
+from app.pipeline.price_job import _chunks, _claim_run, _normalize_symbols
 from app.pipeline.scheduler import latest_due_weekday
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +93,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
         collection = FakeCollection()
         db = SimpleNamespace(pipeline_runs=collection, app_metadata=FakeCollection())
         get_db.return_value = db
+
         def fake_crawler(argv, *, on_symbol_saved=None):
             symbols = argv[1].split(",")
             for symbol in symbols:
@@ -113,10 +114,8 @@ class RenderFreePriceJobTests(unittest.TestCase):
         self.assertEqual(result["symbols_success"], 12)
         self.assertEqual([call.args[0][1].count(",") + 1 for call in crawler_main.call_args_list], [5, 5, 2])
         self.assertEqual(collection.documents["price_sync:2026-11-13"]["status"], "succeeded")
-        metadata = get_db.return_value.app_metadata.documents["price_sync"]
-        self.assertEqual(metadata["status"], "succeeded")
-        self.assertEqual(metadata["symbols_success"], 12)
-        self.assertIsNotNone(metadata["last_updated"])
+        # Metadata is deliberately published by the Scheduler, not by the crawler.
+        self.assertIsNone(db.app_metadata.documents.get("price_sync"))
 
     @patch("app.database.job_io.database")
     @patch("fetch_data_local.main")
@@ -166,6 +165,7 @@ class RenderFreePriceJobTests(unittest.TestCase):
         self.assertEqual(result["successful_symbols"], ["FPT"])
         self.assertEqual(result["failed_symbols"], ["MWG"])
         self.assertIn("provider disconnected", result["error"])
+        self.assertIsNone(get_db.return_value.app_metadata.documents.get("price_sync"))
 
     @patch("app.database.job_io.database")
     @patch("fetch_data_local.main")
