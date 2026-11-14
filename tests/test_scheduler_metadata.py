@@ -138,7 +138,7 @@ class PriceMetadataTests(unittest.TestCase):
             with (
                 patch.object(scheduler, "POLL_SECONDS", 15),
                 patch.object(scheduler, "latest_due_weekday", return_value=datetime(2026, 11, 16).date()),
-                patch.object(scheduler, "_has_successful_run", return_value=False),
+                patch.object(scheduler, "_has_successful_run", side_effect=[False, True]),
                 patch.object(scheduler, "_ensure_price_metadata", side_effect=[RuntimeError("Atlas transient error"), {"status": "created"}]) as ensure,
                 patch("app.pipeline.price_job.run_price_job", return_value={"status": "succeeded", "symbols_success": 100, "symbols_failed": 0}) as run_job,
                 patch.object(scheduler.asyncio, "sleep", new=AsyncMock(side_effect=[None, None, asyncio.CancelledError()])),
