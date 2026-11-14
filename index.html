@@ -558,9 +558,17 @@
             const user = auth.currentUser;
             if (!user) throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
             const token = await user.getIdToken();
-            const response = await fetch(API_BASE_URL + path, {
+            // Every data request gets a unique URL so intermediaries and browser
+            // caches cannot reuse an earlier API response.
+            const requestUrl = new URL(path, API_BASE_URL);
+            requestUrl.searchParams.set('_ts', String(Date.now()));
+            const response = await fetch(requestUrl.toString(), {
                 method: 'GET',
-                headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+                headers: {
+                    'Authorization': 'Bearer ' + token,
+                    'Accept': 'application/json',
+                    'Cache-Control': 'no-cache'
+                },
                 cache: 'no-store'
             });
             if (!response.ok) {
