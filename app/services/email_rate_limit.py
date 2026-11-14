@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -35,22 +35,13 @@ class MongoEmailRateLimiter:
         normalized = value.strip().lower()
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
-    def _increment(
-        self,
-        *,
-        scope: str,
-        subject: str,
-        window_seconds: int,
-        now: datetime,
-    ) -> tuple[int, int]:
+    def _increment(self, *, scope: str, subject: str, window_seconds: int, now: datetime) -> tuple[int, int]:
         timestamp = now.timestamp()
         window_start = int(timestamp // window_seconds) * window_seconds
         window_end = window_start + window_seconds
         digest = self._subject_digest(subject)
         document_id = f"{scope}:{window_seconds}:{window_start}:{digest}"
-        expires_at = datetime.fromtimestamp(
-            window_end + self.RETENTION_SECONDS, tz=timezone.utc
-        )
+        expires_at = datetime.fromtimestamp(window_end + self.RETENTION_SECONDS, tz=timezone.utc)
         update = {
             "$inc": {"count": 1},
             "$setOnInsert": {
@@ -58,41 +49,24 @@ class MongoEmailRateLimiter:
                 "window_seconds": window_seconds,
                 "window_start": datetime.fromtimestamp(window_start, tz=timezone.utc),
                 "expires_at": expires_at,
-                "count": 0,
             },
         }
         query = {"_id": document_id}
-
         try:
             document = self.collection.find_one_and_update(
-                query,
-                update,
-                upsert=True,
-                return_document=ReturnDocument.AFTER,
+                query, update, upsert=True, return_document=ReturnDocument.AFTER
             )
         except DuplicateKeyError:
-            # Two first requests may race to upsert the same deterministic _id.
-            # Retry as an update against the document created by the winner.
+            # Concurrent first upserts can race on the deterministic _id.
             document = self.collection.find_one_and_update(
-                query,
-                {"$inc": {"count": 1}},
-                upsert=False,
+                query, {"$inc": {"count": 1}}, upsert=False,
                 return_document=ReturnDocument.AFTER,
             )
         if document is None:
             raise RuntimeError("MongoDB did not return the updated rate-limit counter")
+        return int(document["count"]), max(1, math.ceil(window_end - timestamp))
 
-        count = int(document["count"])
-        retry_after = max(1, math.ceil(window_end - timestamp))
-        return count, retry_after
-
-    def check(
-        self,
-        *,
-        email: str,
-        ip_address: str,
-        now: datetime | None = None,
-    ) -> None:
+    def check(self, *, email: str, ip_address: str, now: datetime | None = None) -> None:
         """Atomically count one send attempt for the account and source IP."""
         current = now or datetime.now(timezone.utc)
         if current.tzinfo is None:
@@ -107,10 +81,8 @@ class MongoEmailRateLimiter:
         for scope, subject, limits in policies:
             for window_seconds, maximum in limits:
                 count, retry_after = self._increment(
-                    scope=scope,
-                    subject=subject,
-                    window_seconds=window_seconds,
-                    now=current,
+                    scope=scope, subject=subject,
+                    window_seconds=window_seconds, now=current,
                 )
                 if count > maximum:
                     exceeded_retry_after.append(retry_after)
