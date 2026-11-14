@@ -93,25 +93,6 @@ def _claim_run(collection, run_id: str, scheduled_for: str | None, total: int, s
         return False
 
 
-
-def _write_price_metadata(db, summary: dict) -> None:
-    """Persist the latest price-sync outcome for the frontend metadata API."""
-    completed_at = summary.get("completed_at") or _utc_now()
-    db.app_metadata.update_one(
-        {"_id": "price_sync"},
-        {"$set": {
-            "key": "price_sync",
-            "last_updated": completed_at,
-            "status": str(summary.get("status", "unknown")),
-            "symbols_total": int(summary.get("symbols_total", 0)),
-            "symbols_success": int(summary.get("symbols_success", 0)),
-            "symbols_failed": int(summary.get("symbols_failed", 0)),
-            "run_id": summary.get("run_id"),
-            "updated_at": completed_at,
-        }},
-        upsert=True,
-    )
-
 def run_price_job(
     *,
     symbols: list[str] | None = None,
@@ -212,19 +193,10 @@ def run_price_job(
         }
         db.pipeline_runs.update_one({"_id": run_id}, {"$set": summary})
         result = {"run_id": run_id, **summary}
-        _write_price_metadata(db, result)
         print(json.dumps(result, ensure_ascii=False, default=str))
         return result
     except Exception as exc:
         completed_at = _utc_now()
-        failure_summary = {
-            "run_id": run_id,
-            "status": "failed",
-            "completed_at": completed_at,
-            "symbols_total": len(target_symbols),
-            "symbols_success": len(set(saved_symbols) & set(target_symbols)),
-            "symbols_failed": len(set(target_symbols) - set(saved_symbols)),
-        }
         db.pipeline_runs.update_one(
             {"_id": run_id},
             {"$set": {
@@ -234,10 +206,6 @@ def run_price_job(
                 "error": f"{type(exc).__name__}: {exc}"[:1000],
             }},
         )
-        try:
-            _write_price_metadata(db, failure_summary)
-        except Exception:
-            print("Unable to persist failed price-sync metadata", flush=True)
         raise
 
 
