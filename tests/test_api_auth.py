@@ -1,6 +1,7 @@
 """Unit tests for API authentication and subscription authorization."""
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -40,10 +41,27 @@ class FakeFirestore:
         return self.collection_ref
 
 
+class FakeMongoUsers:
+    def __init__(self):
+        self.records = {}
+
+    def find_one(self, query):
+        return self.records.get(query["email"])
+
+    def update_one(self, query, update, upsert=False):
+        email = query["email"]
+        if email not in self.records and upsert:
+            self.records[email] = dict(update.get("$setOnInsert", {}))
+
+
 class RequireUserTests(unittest.TestCase):
     def setUp(self):
         main._rate_limit_state.clear()
         self.app = object()
+        self.mongo = SimpleNamespace(users=FakeMongoUsers())
+        self.mongo_patch = patch("app.api.main.get_database", return_value=self.mongo)
+        self.mongo_patch.start()
+        self.addCleanup(self.mongo_patch.stop)
         self.valid_claims = {
             "uid": "uid-123",
             "email": "user@example.com",
@@ -104,7 +122,52 @@ class RequireUserTests(unittest.TestCase):
         ):
             with self.assertRaises(HTTPException) as error:
                 main.require_user("Bearer token")
+        self.assertEqual(error.exception.status_code, 401)
+
+    def test_unregistered_firebase_account_is_provisioned_as_guest(self):
+        self.firebase = FakeFirestore(FakeDocument())
+        with patch("app.api.main.firestore.client", return_value=self.firebase):
+            claims = main.require_guest("Bearer token")
+        self.assertEqual(claims["app_role"], "guest")
+        self.assertEqual(self.mongo.users.records["user@example.com"]["role"], "guest")
+        with self.assertRaises(HTTPException) as error:
+            main.require_user("Bearer token")
         self.assertEqual(error.exception.status_code, 403)
+
+    def test_mongo_role_is_authoritative_after_legacy_migration(self):
+        self.mongo.users.records["user@example.com"] = {
+            "email": "user@example.com",
+            "role": "guest",
+            "status": "active",
+            "expired_at": None,
+        }
+        claims = main.require_guest("Bearer token")
+        self.assertEqual(claims["app_role"], "guest")
+        with self.assertRaises(HTTPException) as error:
+            main.require_user("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
+
+    def test_admin_dependency_rejects_user_role(self):
+        with self.assertRaises(HTTPException) as error:
+            main.require_admin("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
+
+    def test_locked_mongo_account_is_rejected(self):
+        self.mongo.users.records["user@example.com"] = {
+            "email": "user@example.com",
+            "role": "user",
+            "status": "locked",
+            "expired_at": datetime.now(timezone.utc) + timedelta(days=2),
+        }
+        with self.assertRaises(HTTPException) as error:
+            main.require_guest("Bearer token")
+        self.assertEqual(error.exception.status_code, 403)
+
+    def test_mongo_account_registry_failure_fails_closed(self):
+        with patch("app.api.main.get_database", side_effect=ConnectionError("Atlas down")):
+            with self.assertRaises(HTTPException) as error:
+                main.require_guest("Bearer token")
+        self.assertEqual(error.exception.status_code, 503)
 
     def test_active_user_is_authorized_and_email_is_normalized(self):
         claims = main.require_user("Bearer token")
@@ -143,11 +206,12 @@ class RequireUserTests(unittest.TestCase):
                 main.require_user("Bearer token")
         self.assertEqual(error.exception.status_code, 403)
 
-    def test_every_data_api_route_requires_user(self):
-        # Email verification is intentionally available before a new account
-        # has verified its email or received an application membership record.
-        # That endpoint validates the Firebase ID token itself and must not use
-        # require_user, which explicitly rejects unverified accounts.
+    def test_data_api_routes_require_the_correct_role_dependency(self):
+        basic_paths = {
+            "/api/status",
+            "/api/stocks",
+            "/api/stocks/{symbol}",
+        }
         data_routes = [
             route for route in main.app.routes
             if getattr(route, "path", "").startswith("/api/")
@@ -160,7 +224,9 @@ class RequireUserTests(unittest.TestCase):
                     getattr(dep.call, "__name__", None)
                     for dep in route.dependant.dependencies
                 }
-                self.assertIn("require_user", dependency_names)
+                expected = "require_guest" if route.path in basic_paths else "require_user"
+                self.assertIn(expected, dependency_names)
+
 
     def test_simulation_routes_are_authenticated(self):
         routes = [
