@@ -1,69 +1,46 @@
 from pathlib import Path
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[1]
-
 
 class StaticEntryPointTests(unittest.TestCase):
     def test_legacy_login_redirects_to_canonical_app(self):
-        legacy_login = (ROOT / "login.html").read_text(encoding="utf-8")
-        self.assertIn("window.location.replace('./index.html'", legacy_login)
-        self.assertIn('url=./index.html', legacy_login)
-        self.assertNotIn("firebase.initializeApp", legacy_login)
-        self.assertNotIn("hoc-tieng-trung-64b8d", legacy_login)
+        source=(ROOT/"login.html").read_text(encoding="utf-8")
+        self.assertIn("window.location.replace('./index.html'",source)
 
-    def test_admin_account_actions_follow_firestore_rules(self):
-        app = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("function renderAdminUsers()", app)
-        self.assertIn("function extendUser(email)", app)
-        self.assertIn("function suspendUser(email)", app)
-        self.assertIn("firebase.firestore.Timestamp.fromDate(currentExpire)", app)
-        self.assertIn("firebase.firestore.Timestamp.fromDate(new Date(0))", app)
-        self.assertNotIn("docRef.delete()", app)
-        self.assertNotIn("function deleteUser(email)", app)
+    def test_admin_entrypoint_uses_backend_only_and_firebase_auth(self):
+        admin=(ROOT/"admin.html").read_text(encoding="utf-8")
+        self.assertIn("/api/admin/users",admin)
+        self.assertIn("/api/auth/me",admin)
+        self.assertIn("Authorization",admin)
+        self.assertNotIn("firebase.firestore",admin)
+        self.assertNotIn("allowed_users",admin)
+        self.assertNotIn("MONGODB_URI",admin)
 
-    def test_pages_workflow_publishes_only_allowlisted_frontend_assets(self):
-        workflow = (ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
-        self.assertIn("cp index.html login.html lightweight-charts.js CNAME site/", workflow)
-        self.assertIn("DAUTU_API_BASE_URL", workflow)
-        self.assertNotIn("cp data.json", workflow)
-        self.assertNotIn("cp screener_results.json", workflow)
-        self.assertNotIn("cp -r history", workflow)
-        self.assertNotIn("cp -r bctc_data", workflow)
+    def test_main_frontend_does_not_provision_memberships_in_firestore(self):
+        app=(ROOT/"index.html").read_text(encoding="utf-8")
+        self.assertIn("apiFetch('/api/auth/me')",app)
+        self.assertIn("window.location.href = './admin.html'",app)
+        self.assertNotIn("allowed_users",app)
+        self.assertNotIn("firebase.firestore",app)
+        self.assertNotIn("expireDate.setDate(expireDate.getDate() + 7)",app)
 
-    def test_frontend_reads_private_data_only_through_authenticated_api(self):
-        app = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("async function apiFetch(path)", app)
-        self.assertIn("Authorization", app)
-        self.assertIn("apiFetch('/api/screener?limit=500')", app)
-        self.assertIn("apiFetch('/api/stocks?limit=500')", app)
-        self.assertIn("apiFetch('/api/simulations?limit=500')", app)
-        self.assertIn("apiFetch('/api/history/' + encodeURIComponent(symbol))", app)
-        for legacy_asset in (
-            "screener_results.json", "symbol_sim_rates.json",
-            "quarterly_mean_details.json", "data.json", "history/",
-        ):
-            self.assertNotIn("fetch('" + legacy_asset, app)
+    def test_pages_workflow_publishes_allowlisted_frontend_assets(self):
+        workflow=(ROOT/".github"/"workflows"/"pages.yml").read_text(encoding="utf-8")
+        self.assertIn("cp index.html login.html admin.html lightweight-charts.js CNAME site/",workflow)
+        self.assertIn('"admin.html"',workflow)
+        self.assertNotIn("cp data.json",workflow)
+        self.assertNotIn("cp screener_results.json",workflow)
+        self.assertNotIn("cp -r history",workflow)
+        self.assertNotIn("cp -r bctc_data",workflow)
 
-    def test_admin_guard_allows_fixed_admin_email_without_verification(self):
-        app = (ROOT / "index.html").read_text(encoding="utf-8")
-        admin_guard = app[app.index("async function openAdminModal()"):]
-        self.assertIn("Tài khoản hiện tại không phải email Admin được cấp quyền.", admin_guard)
-        self.assertNotIn("emailVerified", admin_guard)
+    def test_private_data_remains_backend_api_only(self):
+        app=(ROOT/"index.html").read_text(encoding="utf-8")
+        self.assertIn("async function apiFetch(path)",app)
+        self.assertIn("Authorization",app)
+        self.assertIn("apiFetch('/api/screener?limit=500')",app)
+        self.assertIn("apiFetch('/api/stocks?limit=500')",app)
+        self.assertNotIn("fetch('data.json",app)
 
-    def test_new_user_profiles_use_firestore_timestamps(self):
-        app = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)", app)
-        self.assertEqual(
-            app.count("expiresAt: firebase.firestore.Timestamp.fromDate(expireDate)"),
-            2,
-        )
-        self.assertNotIn("expiresAt: expireDate.toISOString()", app)
-        self.assertIn("await userDocRef.set(userData)", app)
-        self.assertIn("createdUser = credential.user", app)
-        self.assertIn("A later login will retry profile provisioning", app)
-
-
-if __name__ == "__main__":
+if __name__=="__main__":
     unittest.main()

@@ -5,16 +5,18 @@ import asyncio
 import json
 import logging
 import os
+import re
 import smtplib
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 import firebase_admin
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Response
+from pydantic import BaseModel, Field
 from firebase_admin import auth as firebase_auth, credentials, firestore
 from pymongo.database import Database
 
@@ -373,6 +375,107 @@ def require_admin(authorization: str | None = Header(default=None)) -> dict[str,
     if user.get("app_role") != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges are required")
     return user
+
+
+
+def db_dependency() -> Database:
+    try:
+        return get_database()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+class AdminStatusUpdate(BaseModel):
+    status: Literal["active", "locked"]
+
+class AdminRoleUpdate(BaseModel):
+    role: Literal["guest", "user", "admin"]
+    expired_at: datetime | None = None
+
+class AdminExtendRequest(BaseModel):
+    days: int = Field(ge=1, le=3650)
+
+def _serialize_account(account: dict[str, Any]) -> dict[str, Any]:
+    fields = ("email", "role", "status", "created_at", "expired_at", "updated_at", "created_source")
+    return {key: (account.get(key).isoformat() if isinstance(account.get(key), datetime) else account.get(key)) for key in fields}
+
+def _admin_target(db: Database, email: str) -> dict[str, Any]:
+    normalized = email.strip().lower()
+    if len(normalized) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+        raise HTTPException(status_code=422, detail="Invalid email address")
+    account = db.users.find_one({"email": normalized})
+    if account is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return account
+
+def _ensure_another_active_admin(db: Database, target: dict[str, Any]) -> None:
+    if target.get("role") == "admin" and target.get("status", "active") == "active":
+        remaining = db.users.count_documents({"role": "admin", "status": "active", "email": {"$ne": target["email"]}})
+        if remaining < 1:
+            raise HTTPException(status_code=409, detail="Cannot remove or lock the last active Admin")
+
+def _admin_audit(db: Database, actor: str, target: str, action: str, before: dict[str, Any], after: dict[str, Any]) -> None:
+    db.users_admin_audit.insert_one({"actor_email": actor, "target_email": target, "action": action, "before": _serialize_account(before), "after": _serialize_account(after), "created_at": datetime.now(timezone.utc)})
+
+@router.get("/api/auth/me")
+def current_account(user: dict[str, Any] = Depends(require_guest)) -> dict[str, Any]:
+    return {"email": user["email"], "role": user["app_role"], "status": user["account_status"],
+            "created_at": user.get("account_created_at").isoformat() if isinstance(user.get("account_created_at"), datetime) else None,
+            "expired_at": user.get("account_expired_at").isoformat() if isinstance(user.get("account_expired_at"), datetime) else None}
+
+@router.get("/api/admin/users")
+def admin_list_users(_: dict[str, Any] = Depends(require_admin), db: Database = Depends(db_dependency),
+                     limit: int = Query(default=500, ge=1, le=1000)) -> list[dict[str, Any]]:
+    rows = db.users.find({}, {"_id": 0, "email": 1, "role": 1, "status": 1, "created_at": 1, "expired_at": 1, "updated_at": 1, "created_source": 1}).sort("email", 1).limit(limit)
+    return [_serialize_account(row) for row in rows]
+
+@router.patch("/api/admin/users/{email}/status")
+def admin_update_status(payload: AdminStatusUpdate, email: str = Path(..., min_length=3, max_length=254),
+                        actor: dict[str, Any] = Depends(require_admin), db: Database = Depends(db_dependency)) -> dict[str, Any]:
+    target = _admin_target(db, email)
+    if target["email"] == actor["email"] and payload.status == "locked":
+        raise HTTPException(status_code=409, detail="You cannot lock your own Admin account")
+    if payload.status == "locked": _ensure_another_active_admin(db, target)
+    before = dict(target); now = datetime.now(timezone.utc)
+    db.users.update_one({"email": target["email"]}, {"$set": {"status": payload.status, "updated_at": now}})
+    after = db.users.find_one({"email": target["email"]})
+    _admin_audit(db, actor["email"], target["email"], "status_changed", before, after)
+    return _serialize_account(after)
+
+@router.post("/api/admin/users/{email}/extend")
+def admin_extend_user(payload: AdminExtendRequest, email: str = Path(..., min_length=3, max_length=254),
+                      actor: dict[str, Any] = Depends(require_admin), db: Database = Depends(db_dependency)) -> dict[str, Any]:
+    target = _admin_target(db, email)
+    if target.get("role") != "user": raise HTTPException(status_code=409, detail="Only User accounts can be extended")
+    now = datetime.now(timezone.utc); expiry = target.get("expired_at")
+    if isinstance(expiry, datetime) and expiry.tzinfo is None: expiry = expiry.replace(tzinfo=timezone.utc)
+    new_expiry = max(now, expiry) + timedelta(days=payload.days) if isinstance(expiry, datetime) else now + timedelta(days=payload.days)
+    before = dict(target)
+    db.users.update_one({"email": target["email"]}, {"$set": {"expired_at": new_expiry, "status": "active", "updated_at": now}})
+    after = db.users.find_one({"email": target["email"]})
+    _admin_audit(db, actor["email"], target["email"], "subscription_extended", before, after)
+    return _serialize_account(after)
+
+@router.patch("/api/admin/users/{email}/role")
+def admin_update_role(payload: AdminRoleUpdate, email: str = Path(..., min_length=3, max_length=254),
+                      actor: dict[str, Any] = Depends(require_admin), db: Database = Depends(db_dependency)) -> dict[str, Any]:
+    target = _admin_target(db, email)
+    if target["email"] == actor["email"] and payload.role != "admin":
+        raise HTTPException(status_code=409, detail="You cannot remove your own Admin role")
+    if target.get("role") == "admin" and payload.role != "admin": _ensure_another_active_admin(db, target)
+    now = datetime.now(timezone.utc)
+    if payload.role == "user":
+        expiry = payload.expired_at or target.get("expired_at")
+        if not isinstance(expiry, datetime): raise HTTPException(status_code=422, detail="A future expired_at is required for User role")
+        if expiry.tzinfo is None: expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry <= now: raise HTTPException(status_code=422, detail="User expiry must be in the future")
+        expired_at = expiry
+    else: expired_at = None
+    before = dict(target)
+    db.users.update_one({"email": target["email"]}, {"$set": {"role": payload.role, "expired_at": expired_at, "updated_at": now}})
+    after = db.users.find_one({"email": target["email"]})
+    _admin_audit(db, actor["email"], target["email"], "role_changed", before, after)
+    return _serialize_account(after)
 
 
 def db_dependency() -> Database:

@@ -6,6 +6,7 @@ on:
     paths:
       - "index.html"
       - "login.html"
+      - "admin.html"
       - "lightweight-charts.js"
       - "CNAME"
       - "api-config.js"
@@ -54,7 +55,7 @@ jobs:
           with open("site/api-config.js", "w", encoding="utf-8") as handle:
               handle.write("window.DAUTU_API_BASE_URL = " + json.dumps(api_url) + ";\n")
           PY
-          cp index.html login.html lightweight-charts.js CNAME site/
+          cp index.html login.html admin.html lightweight-charts.js CNAME site/
           touch site/.nojekyll
 
       - name: Upload Pages artifact

@@ -224,7 +224,12 @@ class RequireUserTests(unittest.TestCase):
                     getattr(dep.call, "__name__", None)
                     for dep in route.dependant.dependencies
                 }
-                expected = "require_guest" if route.path in basic_paths else "require_user"
+                if route.path in basic_paths or route.path == "/api/auth/me":
+                    expected = "require_guest"
+                elif route.path.startswith("/api/admin/"):
+                    expected = "require_admin"
+                else:
+                    expected = "require_user"
                 self.assertIn(expected, dependency_names)
 
 
