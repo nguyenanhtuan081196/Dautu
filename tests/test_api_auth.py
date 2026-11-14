@@ -125,7 +125,9 @@ class RequireUserTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 401)
 
     def test_unregistered_firebase_account_is_provisioned_as_guest(self):
-        claims = main.require_guest("Bearer token")
+        self.firebase = FakeFirestore(FakeDocument())
+        with patch("app.api.main.firestore.client", return_value=self.firebase):
+            claims = main.require_guest("Bearer token")
         self.assertEqual(claims["app_role"], "guest")
         self.assertEqual(self.mongo.users.records["user@example.com"]["role"], "guest")
         with self.assertRaises(HTTPException) as error:
