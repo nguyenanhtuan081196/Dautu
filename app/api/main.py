@@ -290,6 +290,8 @@ def require_user(authorization: str | None = Header(default=None)) -> dict[str, 
             upsert=True,
         )
         user_record = db.users.find_one({"email": email}) or {}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Account authorization service unavailable") from exc
 
