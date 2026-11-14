@@ -4,7 +4,6 @@ from __future__ import annotations
 import threading
 import unittest
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -70,6 +69,21 @@ class MongoEmailRateLimiterTests(unittest.TestCase):
                 email="person@example.com",
                 ip_address="203.0.113.20",
                 now=self.start.replace(minute=self.start.minute + 3),
+            )
+        self.assertEqual(error.exception.status_code, 429)
+
+    def test_ip_limit_blocks_many_distinct_accounts_from_one_address(self):
+        for index in range(10):
+            self.limiter.check(
+                email=f"person-{index}@example.com",
+                ip_address="203.0.113.60",
+                now=self.start,
+            )
+        with self.assertRaises(HTTPException) as error:
+            self.limiter.check(
+                email="person-10@example.com",
+                ip_address="203.0.113.60",
+                now=self.start,
             )
         self.assertEqual(error.exception.status_code, 429)
 
