@@ -621,7 +621,9 @@
                 const authError = document.getElementById('login-error');
                 if (authError) {
                     let message = err.message || 'Không thể xác minh quyền truy cập. Vui lòng thử lại.';
-                    if (err.statusCode === 401) {
+                    if (err.statusCode === 401 && /subscription has expired/i.test(message)) {
+                        message = 'Tài khoản đã hết hạn sử dụng. Vui lòng liên hệ Admin để gia hạn.';
+                    } else if (err.statusCode === 401) {
                         message = 'Phiên Firebase không hợp lệ hoặc đã hết hạn. Hãy đăng xuất, đăng nhập lại; nếu vẫn lỗi, tải lại trang.';
                     } else if (err.statusCode === 403 && /Email verification is required/i.test(message)) {
                         message = 'Tài khoản chưa xác minh email nên máy chủ từ chối truy cập. Hãy xác minh email trước khi đăng nhập.';
