@@ -111,7 +111,13 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
         raise RuntimeError("Email sender is not configured on the server")
 
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    raw_smtp_port = os.getenv("SMTP_PORT", "587").strip()
+    try:
+        smtp_port = int(raw_smtp_port)
+    except ValueError as exc:
+        logger.error("smtp_configuration_invalid field=SMTP_PORT expected=numeric_port")
+        raise RuntimeError("SMTP_PORT must be a numeric port, for example 587") from exc
+    logger.info("smtp_connection_start host=%s port=%s", smtp_host, smtp_port)
     message = EmailMessage()
     message["Subject"] = "Xác minh email tài khoản Dautu"
     message["From"] = f"Dautu <{sender}>"
