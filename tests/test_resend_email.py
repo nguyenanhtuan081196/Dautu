@@ -11,6 +11,7 @@ class GmailVerificationTests(unittest.TestCase):
         smtp = MagicMock()
         smtp.send_message.return_value = {}
         smtp_ssl.return_value.__enter__.return_value = smtp
+        smtp.send_message.return_value = {}
         _send_gmail_verification("user@example.net", "https://firebase.test/action?oobCode=abc")
         args, kwargs = smtp_ssl.call_args
         self.assertEqual(args[:2], ("smtp.gmail.com", 465))
