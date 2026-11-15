@@ -419,14 +419,13 @@ class MailDiagnosticTests(unittest.TestCase):
     def setUp(self):
         main._test_diagnostic_state.clear()
 
-    def test_public_browser_diagnostic_reports_presence_without_sending_mail(self):
+    def test_public_browser_diagnostic_reports_resend_configuration_without_sending(self):
         request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
         with patch.dict(
             "os.environ",
             {
-                "SMTP_USER": "sender@example.com",
-                "SMTP_APP_PASSWORD": "not-a-real-secret",
-                "SMTP_FROM_EMAIL": "sender@example.com",
+                "RESEND_API_KEY": "re_test_key_not_real",
+                "RESEND_FROM_EMAIL": "Dautu <no-reply@example.com>",
                 "FIREBASE_SERVICE_ACCOUNT_JSON": "{configured}",
                 "FRONTEND_URL": "https://example.com",
             },
@@ -435,112 +434,31 @@ class MailDiagnosticTests(unittest.TestCase):
             result = main.test_send_mail_diagnostic(request)
 
         self.assertEqual(result["status"], "ok")
-        self.assertTrue(result["smtp"]["configuration_complete"])
+        self.assertTrue(result["resend"]["configuration_complete"])
+        self.assertTrue(result["resend"]["api_key_configured"])
+        self.assertTrue(result["resend"]["from_address_configured"])
         self.assertTrue(result["firebase_service_account_configured"])
         self.assertTrue(result["frontend_url_configured"])
         self.assertFalse(result["email_sent"])
-        self.assertIn("does not connect to SMTP", result["note"])
+        self.assertIn("does not connect to Resend", result["note"])
 
-    def test_public_browser_diagnostic_does_not_reveal_secret_values(self):
+    def test_public_browser_diagnostic_does_not_reveal_resend_secrets(self):
         request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.2"))
         with patch.dict(
             "os.environ",
             {
-                "SMTP_USER": "sender@example.com",
-                "SMTP_APP_PASSWORD": "sensitive-value",
-                "SMTP_FROM_EMAIL": "",
+                "RESEND_API_KEY": "sensitive-resend-value",
+                "RESEND_FROM_EMAIL": "",
             },
             clear=True,
         ):
             result = main.test_send_mail_diagnostic(request)
 
         serialized = str(result)
-        self.assertNotIn("sensitive-value", serialized)
-        self.assertNotIn("sender@example.com", serialized)
+        self.assertNotIn("sensitive-resend-value", serialized)
         self.assertEqual(result["status"], "needs_configuration")
-        self.assertFalse(result["smtp"]["configuration_complete"])
-
-    def test_invalid_smtp_port_reports_actionable_configuration_error(self):
-        with patch.dict(
-            "os.environ",
-            {
-                "SMTP_USER": "sender@example.com",
-                "SMTP_APP_PASSWORD": "test-app-password",
-                "SMTP_FROM_EMAIL": "sender@example.com",
-                "SMTP_HOST": "smtp.gmail.com",
-                "SMTP_PORT": "587/tls",
-            },
-            clear=True,
-        ):
-            with self.assertLogs(main.logger, level="ERROR") as captured:
-                with self.assertRaisesRegex(RuntimeError, "SMTP_PORT must be a numeric port"):
-                    main._send_gmail_verification(
-                        "recipient@example.com",
-                        "https://example.com/verification-secret",
-                    )
-
-        self.assertIn("smtp_configuration_invalid field=SMTP_PORT", "\\n".join(captured.output))
-        self.assertNotIn("test-app-password", "\\n".join(captured.output))
-
-    def test_smtp_connection_oserror_falls_back_to_ssl_465(self):
-        with patch.dict(
-            "os.environ",
-            {
-                "SMTP_USER": "sender@example.com",
-                "SMTP_APP_PASSWORD": "test-app-password",
-                "SMTP_FROM_EMAIL": "sender@example.com",
-                "SMTP_HOST": "smtp.gmail.com",
-                "SMTP_PORT": "587",
-            },
-            clear=True,
-        ), patch(
-            "app.api.main.smtplib.SMTP",
-            side_effect=OSError(101, "Network is unreachable"),
-        ), patch("app.api.main.smtplib.SMTP_SSL") as smtp_ssl:
-            ssl_server = smtp_ssl.return_value.__enter__.return_value
-            main._send_gmail_verification(
-                "recipient@example.com",
-                "https://example.com/verification-secret",
-            )
-
-        smtp_ssl.assert_called_once()
-        self.assertEqual(smtp_ssl.call_args.args[:2], ("smtp.gmail.com", 465))
-        ssl_server.login.assert_called_once_with("sender@example.com", "test-app-password")
-        ssl_server.send_message.assert_called_once()
-
-    def test_smtp_authentication_error_logs_code_without_provider_response(self):
-        auth_error = main.smtplib.SMTPAuthenticationError(535, b"private provider response")
-        with patch.dict(
-            "os.environ",
-            {
-                "SMTP_USER": "sender@example.com",
-                "SMTP_APP_PASSWORD": "test-app-password",
-                "SMTP_FROM_EMAIL": "sender@example.com",
-                "SMTP_HOST": "smtp.gmail.com",
-                "SMTP_PORT": "587",
-            },
-            clear=True,
-        ), patch("app.api.main.smtplib.SMTP") as smtp, patch(
-            "app.api.main.smtplib.SMTP_SSL"
-        ) as smtp_ssl:
-            smtp.return_value.__enter__.return_value.ehlo.return_value = (250, b"ok")
-            smtp.return_value.__enter__.return_value.starttls.return_value = (220, b"ready")
-            smtp.return_value.__enter__.return_value.login.side_effect = auth_error
-            with self.assertLogs(main.logger, level="ERROR") as captured:
-                with self.assertRaises(main.smtplib.SMTPAuthenticationError):
-                    main._send_gmail_verification(
-                        "recipient@example.com",
-                        "https://example.com/verification-secret",
-                    )
-
-        smtp_ssl.assert_not_called()
-        diagnostic = "\\n".join(captured.output)
-        self.assertIn("stage=authenticate", diagnostic)
-        self.assertIn("smtp_code=535", diagnostic)
-        self.assertNotIn("private provider response", diagnostic)
-        self.assertNotIn("test-app-password", diagnostic)
-        self.assertNotIn("recipient@example.com", diagnostic)
-        self.assertNotIn("verification-secret", diagnostic)
+        self.assertFalse(result["resend"]["configuration_complete"])
+        self.assertFalse(result["resend"]["from_address_configured"])
 
 
 if __name__ == "__main__":

@@ -1,61 +1,63 @@
-# Gửi email xác minh qua Gmail bằng Render
+# Gửi email xác minh qua Resend bằng Render
 
-Website không gửi email trực tiếp từ trình duyệt nữa. Luồng mới:
+Website không gửi email trực tiếp từ trình duyệt. Luồng gửi thư:
 
 1. Người dùng đăng ký hoặc bấm **Gửi lại email xác minh**.
-2. Firebase Authentication xác thực phiên đăng nhập và cấp ID token.
-3. Trình duyệt gửi token đến `POST /api/auth/send-verification` trên Render.
-4. Render dùng Firebase Admin SDK tạo liên kết xác minh cho đúng email trong token.
-5. Render gửi email qua Gmail SMTP bằng Google App Password.
+2. Firebase Authentication cấp ID token cho phiên đăng nhập.
+3. Render xác minh token và lấy email từ claim Firebase (không nhận địa chỉ email tùy ý từ trình duyệt).
+4. Firebase Admin SDK tạo liên kết xác minh.
+5. Render gửi email qua Resend API bằng khóa bí mật chỉ lưu trên Render.
 
-## Cấu hình Gmail
+## 1. Tạo tài khoản Resend
 
-1. Dùng một Gmail riêng cho hệ thống (khuyến nghị), ví dụ `your-system@gmail.com`.
-2. Bật Xác minh 2 bước cho tài khoản Google.
-3. Tạo **App Password** cho ứng dụng gửi mail. Không dùng mật khẩu Gmail thông thường.
-4. Không gửi App Password qua chat, GitHub, hoặc commit vào mã nguồn.
+1. Mở [https://resend.com/signup](https://resend.com/signup) và đăng ký tài khoản.
+2. Xác nhận email và đăng nhập.
+3. Vào **Domains** → **Add Domain**.
+4. Dùng domain hoặc subdomain anh kiểm soát, ví dụ `mail.tenmiencuaanh.com` (thay bằng tên miền thật).
+5. Resend cung cấp các bản ghi DNS riêng cho domain, thường gồm SPF và DKIM.
+6. Mở Cloudflare DNS (nếu DNS tên miền đang quản lý ở Cloudflare), thêm chính xác từng bản ghi Resend cung cấp. Không tự sửa giá trị/host.
+7. Quay lại Resend bấm Verify và chờ trạng thái domain là **Verified**.
 
-## Environment variables trên Render
+Nếu domain gốc đang dùng email ở Google Workspace hoặc nhà cung cấp khác, ưu tiên xác minh một subdomain gửi thư riêng và không thay đổi MX của domain gốc.
 
-Mở service `dautu-api` → Environment và thêm:
+## 2. Tạo API Key
+
+1. Trong Resend, mở **API Keys** → **Create API Key**.
+2. Đặt tên, ví dụ `Dautu Render Production`.
+3. Chọn quyền **Sending access** (đủ để gửi email) và giới hạn key vào domain đã xác minh nếu giao diện cho phép.
+4. Tạo key và sao chép ngay. Key thường bắt đầu bằng `re_` và chỉ hiển thị đầy đủ một lần.
+
+**Không gửi API Key qua chat, không commit lên GitHub, không đặt trong `api-config.js` hoặc mã JavaScript Frontend.** Nếu lộ key, thu hồi và tạo key mới.
+
+## 3. Cấu hình Render
+
+Mở Render → service `dautu-api` → **Environment**. Thêm:
 
 | Key | Value |
 | --- | --- |
-| `SMTP_HOST` | `smtp.gmail.com` |
-| `SMTP_PORT` | `587` |
-| `SMTP_USER` | Địa chỉ Gmail gửi thư |
-| `SMTP_APP_PASSWORD` | Google App Password (16 ký tự; có thể nhập liền không dấu cách) |
-| `SMTP_FROM_EMAIL` | Cùng địa chỉ Gmail ở `SMTP_USER` |
+| `RESEND_API_KEY` | API Key vừa tạo (bí mật) |
+| `RESEND_FROM_EMAIL` | Ví dụ `Dautu <no-reply@mail.tenmiencuaanh.com>` — phải thuộc domain đã Verified |
 | `FRONTEND_URL` | `https://mimohouse.ddns.net` |
 
-Giữ nguyên `FIREBASE_SERVICE_ACCOUNT_JSON` hiện có trên Render. Không đưa JSON tài khoản dịch vụ vào GitHub.
+Giữ nguyên `FIREBASE_SERVICE_ACCOUNT_JSON`, `MONGODB_URI` và `MONGODB_DATABASE` hiện có. Bản code mới chỉ đọc hai biến RESEND. Sau khi thêm biến, lưu và để Render restart/redeploy service.
 
-Sau khi lưu biến môi trường, Render cần khởi động lại service để nhận cấu hình.
+## 4. Kiểm tra
 
-## Firebase Console
+1. Dùng tài khoản thử nghiệm do anh kiểm soát, đăng nhập và bấm **Gửi lại email xác minh**.
+2. Mở Render Logs, tìm `resend_email_accepted` hoặc `verification_resend_delivery_failed`.
+3. Trong Resend Dashboard → Emails, kiểm tra trạng thái email.
+4. Kiểm tra Inbox, Spam; mở link xác minh rồi đăng nhập lại.
+5. Tài khoản chưa xác minh vẫn bị Backend từ chối HTTP 403. Đổi nhà cung cấp email không thay đổi chính sách bảo mật.
 
-Trong Firebase Console → Authentication → Settings → Authorized domains, bảo đảm có:
+Resend có thể cho thử gửi bằng `onboarding@resend.dev` trong sandbox, nhưng chỉ gửi đến địa chỉ email của chính tài khoản Resend. Để gửi đến người dùng thật, cần xác minh domain và dùng địa chỉ From trên đúng domain đó.
 
-- `mimohouse.ddns.net`
-- `dau-tu-65931.firebaseapp.com`
+## 5. Giới hạn chống lạm dụng
 
-Firebase vẫn quản lý tài khoản, mật khẩu và trạng thái xác minh. Gmail SMTP chỉ chịu trách nhiệm vận chuyển email; không thay thế Firebase Authentication.
+Endpoint yêu cầu Firebase ID token hợp lệ và chỉ gửi đến email trong token. Bộ đếm MongoDB Atlas collection `email_rate_limits` vẫn được giữ nguyên:
 
-## Kiểm tra sau triển khai
+- Mỗi tài khoản: 1 lần thử/phút, tối đa 3 lần/giờ.
+- Mỗi IP: 10 lần/phút, 30 lần/giờ.
+- Request vượt giới hạn nhận HTTP 429 và `Retry-After`.
+- MongoDB là nguồn lưu bộ đếm dùng chung qua restart.
 
-1. Đăng ký bằng một email do anh kiểm soát.
-2. Kiểm tra Inbox, Promotions và Spam.
-3. Mở liên kết xác minh trong email.
-4. Quay lại website, đăng nhập và tải lại trang.
-5. Nếu chưa nhận được thư, xem Render Logs của service `dautu-api`; API chỉ trả thông báo cấu hình chung ra trình duyệt, không làm lộ thông tin SMTP.
-
-## Giới hạn chống lạm dụng
-
-Endpoint yêu cầu Firebase ID token hợp lệ và chỉ gửi đến email gắn với token (không nhận email tùy ý từ trình duyệt). Bộ đếm được lưu trong MongoDB Atlas collection `email_rate_limits`, không nằm trong RAM của tiến trình:
-
-- Mỗi tài khoản: 1 lần thử gửi trong 60 giây và tối đa 3 lần thử trong 3.600 giây.
-- Mỗi IP: 10 lần thử/phút và 30 lần thử/giờ để tránh khóa nhầm nhiều người dùng chung mạng NAT.
-- Mỗi lần thử được ghi nhận bằng MongoDB `$inc`; request vượt giới hạn nhận HTTP 429 và `Retry-After`.
-- Bộ đếm tồn tại qua lần restart và giữa nhiều instance Render. MongoDB TTL index tự dọn dữ liệu hết hạn.
-
-Các cửa sổ hiện là fixed UTC windows; quota tính cả lần thử gửi thất bại để tránh lạm dụng retry. Chi tiết kỹ thuật nằm trong `docs/GMAIL_RATE_LIMITS.md`.
+Firebase vẫn quản lý tài khoản, mật khẩu và trạng thái xác minh. Resend chỉ vận chuyển email; không thay thế Firebase Authentication.

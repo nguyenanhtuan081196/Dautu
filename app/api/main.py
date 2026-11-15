@@ -6,12 +6,10 @@ import json
 import logging
 import os
 import re
-import smtplib
-import ssl
+import requests
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -99,109 +97,62 @@ def _safe_projection(fields: tuple[str, ...]) -> dict[str, int]:
     return {"_id": 0, **{field: 1 for field in fields}}
 
 
-def _send_gmail_verification(recipient: str, verification_url: str) -> None:
-    smtp_user = os.getenv("SMTP_USER", "").strip()
-    smtp_password = os.getenv("SMTP_APP_PASSWORD", "").replace(" ", "").strip()
-    sender = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
-    if not smtp_user or not smtp_password or not sender:
+def _send_resend_verification(recipient: str, verification_url: str) -> None:
+    """Deliver a Firebase-generated verification link through Resend."""
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    sender = os.getenv("RESEND_FROM_EMAIL", "").strip()
+    if not api_key or not sender:
         logger.error(
-            "smtp_configuration_missing smtp_user=%s smtp_password=%s smtp_from=%s",
-            bool(smtp_user), bool(smtp_password), bool(sender),
+            "resend_configuration_missing api_key=%s from_email=%s",
+            bool(api_key), bool(sender),
         )
-        raise RuntimeError("Email sender is not configured on the server")
+        raise RuntimeError("Resend email sender is not configured on the server")
 
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
-    raw_smtp_port = os.getenv("SMTP_PORT", "587").strip()
+    payload = {
+        "from": sender,
+        "to": [recipient],
+        "subject": "Xác minh email tài khoản Dautu",
+        "text": (
+            "Xin chào,\n\n"
+            "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
+            "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
+            f"{verification_url}\n\n"
+            "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
+        ),
+        "html": (
+            "<p>Xin chào,</p>"
+            "<p>Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu.</p>"
+            f'<p><a href="{verification_url}">Xác minh email Dautu</a></p>'
+            "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>"
+        ),
+    }
     try:
-        smtp_port = int(raw_smtp_port)
-    except ValueError as exc:
-        logger.error("smtp_configuration_invalid field=SMTP_PORT expected=numeric_port")
-        raise RuntimeError("SMTP_PORT must be a numeric port, for example 587") from exc
-    logger.info("smtp_connection_start host=%s port=%s", smtp_host, smtp_port)
-    message = EmailMessage()
-    message["Subject"] = "Xác minh email tài khoản Dautu"
-    message["From"] = f"Dautu <{sender}>"
-    message["To"] = recipient
-    message.set_content(
-        "Xin chào,\n\n"
-        "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
-        "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
-        f"{verification_url}\n\n"
-        "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
-    )
-    message.add_alternative(
-        "<p>Xin chào,</p><p>Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu.</p>"
-        f'<p><a href="{verification_url}">Xác minh email Dautu</a></p>'
-        "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>",
-        subtype="html",
-    )
-
-    smtp_stage = "connect"
-    try:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
-            smtp_stage = "ehlo"
-            server.ehlo()
-            smtp_stage = "starttls"
-            server.starttls()
-            smtp_stage = "ehlo_after_tls"
-            server.ehlo()
-            smtp_stage = "authenticate"
-            server.login(smtp_user, smtp_password)
-            logger.info("smtp_authentication_succeeded port=%s", smtp_port)
-            smtp_stage = "send_message"
-            server.send_message(message)
-            logger.info("smtp_message_accepted_by_provider port=%s", smtp_port)
-        return
-    except OSError as exc:
-        # Render may block outbound SMTP submission on 587. Retry via implicit
-        # TLS on 465 only when the initial TCP connection itself failed. Never
-        # retry after authentication or send_message errors (avoids duplicates).
-        if smtp_port != 587 or smtp_stage != "connect":
-            error_number = getattr(exc, "errno", None)
-            error_detail = getattr(exc, "strerror", None)
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json=payload,
+            timeout=20,
+        )
+        if not response.ok:
             logger.error(
-                "smtp_delivery_failed stage=%s error_type=%s errno=%s smtp_code=%s error_detail=%s",
-                smtp_stage, type(exc).__name__, error_number,
-                getattr(exc, "smtp_code", None),
-                error_detail[:200] if isinstance(error_detail, str) else None,
+                "resend_delivery_rejected status=%s request_id=%s",
+                response.status_code,
+                response.headers.get("x-resend-id") or response.headers.get("x-request-id"),
             )
-            raise
-        logger.warning(
-            "smtp_primary_connection_failed host=%s port=587 error_type=%s errno=%s; retrying port=465 ssl",
-            smtp_host, type(exc).__name__, getattr(exc, "errno", None),
+            response.raise_for_status()
+        logger.info(
+            "resend_email_accepted status=%s request_id=%s",
+            response.status_code,
+            response.headers.get("x-resend-id") or response.headers.get("x-request-id"),
         )
-    except Exception as exc:
-        error_number = getattr(exc, "errno", None)
-        error_detail = getattr(exc, "strerror", None)
-        logger.error(
-            "smtp_delivery_failed stage=%s error_type=%s errno=%s smtp_code=%s error_detail=%s",
-            smtp_stage, type(exc).__name__, error_number,
-            getattr(exc, "smtp_code", None),
-            error_detail[:200] if isinstance(error_detail, str) else None,
-        )
-        raise
+    except requests.RequestException as exc:
+        logger.error("resend_delivery_failed error_type=%s", type(exc).__name__)
+        raise RuntimeError("Resend could not accept the verification email") from exc
 
-    smtp_stage = "connect_ssl"
-    try:
-        with smtplib.SMTP_SSL(
-            smtp_host, 465, timeout=20, context=ssl.create_default_context()
-        ) as server:
-            smtp_stage = "authenticate_ssl"
-            server.login(smtp_user, smtp_password)
-            logger.info("smtp_authentication_succeeded port=465 mode=ssl")
-            smtp_stage = "send_message_ssl"
-            server.send_message(message)
-            logger.info("smtp_message_accepted_by_provider port=465 mode=ssl")
-    except Exception as exc:
-        error_number = getattr(exc, "errno", None)
-        error_detail = getattr(exc, "strerror", None)
-        logger.error(
-            "smtp_delivery_failed stage=%s error_type=%s errno=%s smtp_code=%s error_detail=%s",
-            smtp_stage, type(exc).__name__, error_number,
-            getattr(exc, "smtp_code", None),
-            error_detail[:200] if isinstance(error_detail, str) else None,
-        )
-        raise
 
 @lru_cache(maxsize=1)
 def _firebase_app():
@@ -223,7 +174,7 @@ def send_verification_email(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> dict[str, str]:
-    """Generate a Firebase verification link and deliver it through Gmail SMTP.
+    """Generate a Firebase verification link and deliver it through Resend.
 
     The caller must already be signed in to Firebase, but the email does not need
     to be verified yet. The server never accepts a recipient address from the
@@ -287,14 +238,14 @@ def send_verification_email(
             detail="Không tạo được liên kết xác minh. Vui lòng thử lại sau.",
         ) from exc
 
-    logger.info("verification_smtp_delivery_started")
+    logger.info("verification_resend_delivery_started")
     try:
-        _send_gmail_verification(email, verification_url)
+        _send_resend_verification(email, verification_url)
     except Exception as exc:
-        logger.error("verification_smtp_delivery_failed error_type=%s", type(exc).__name__)
+        logger.error("verification_resend_delivery_failed error_type=%s", type(exc).__name__)
         raise HTTPException(
             status_code=503,
-            detail="Máy chủ chưa gửi được email. Vui lòng kiểm tra cấu hình SMTP trên Render.",
+            detail="Máy chủ chưa gửi được email. Vui lòng kiểm tra RESEND_API_KEY và RESEND_FROM_EMAIL trên Render.",
         ) from exc
     logger.info("verification_email_sent")
     return {"status": "sent", "message": "Verification email sent"}
@@ -334,29 +285,27 @@ def test_send_mail_diagnostic(request: Request) -> dict[str, Any]:
     """Safe browser check of mail-related configuration; does not send a message."""
     client_key = request.client.host if request.client else "unknown"
     _enforce_diagnostic_rate_limit(client_key)
-    smtp_user = bool(os.getenv("SMTP_USER", "").strip())
-    smtp_password = bool(os.getenv("SMTP_APP_PASSWORD", "").strip())
-    smtp_from = bool(os.getenv("SMTP_FROM_EMAIL", os.getenv("SMTP_USER", "")).strip())
+    resend_api_key = bool(os.getenv("RESEND_API_KEY", "").strip())
+    resend_from = bool(os.getenv("RESEND_FROM_EMAIL", "").strip())
     firebase_credentials = bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip())
     frontend_url_configured = bool(os.getenv("FRONTEND_URL", "").strip())
-    smtp_configured = smtp_user and smtp_password and smtp_from
+    resend_configured = resend_api_key and resend_from
     logger.info(
-        "mail_diagnostic_completed smtp_configured=%s firebase_credentials_configured=%s frontend_url_configured=%s",
-        smtp_configured, firebase_credentials, frontend_url_configured,
+        "mail_diagnostic_completed resend_configured=%s firebase_credentials_configured=%s frontend_url_configured=%s",
+        resend_configured, firebase_credentials, frontend_url_configured,
     )
     return {
-        "status": "ok" if smtp_configured and firebase_credentials else "needs_configuration",
-        "smtp": {
-            "user_configured": smtp_user,
-            "app_password_configured": smtp_password,
-            "from_address_configured": smtp_from,
-            "configuration_complete": smtp_configured,
+        "status": "ok" if resend_configured and firebase_credentials else "needs_configuration",
+        "resend": {
+            "api_key_configured": resend_api_key,
+            "from_address_configured": resend_from,
+            "configuration_complete": resend_configured,
         },
         "firebase_service_account_configured": firebase_credentials,
         "frontend_url_configured": frontend_url_configured,
         "frontend_url_uses_default": not frontend_url_configured,
         "email_sent": False,
-        "note": "This endpoint checks configuration presence only. It does not connect to SMTP or send email.",
+        "note": "This endpoint checks configuration presence only. It does not connect to Resend or send email.",
     }
 
 
