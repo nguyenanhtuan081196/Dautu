@@ -23,6 +23,7 @@ class ApiCompatibilityTests(unittest.TestCase):
         expected = {
             ("POST", "/api/auth/send-verification"),
             ("GET", "/healthz"),
+            ("GET", "/readyz"),
             ("GET", "/api/status"),
             ("GET", "/api/stocks"),
             ("GET", "/api/stocks/{symbol}"),
@@ -35,15 +36,22 @@ class ApiCompatibilityTests(unittest.TestCase):
         }
         self.assertTrue(expected.issubset(routes))
 
-    def test_healthz_returns_ok_when_database_is_available(self):
-        with patch("app.api.main.ping_database", return_value=True):
+    def test_healthz_is_live_without_database_access(self):
+        with patch("app.api.main.ping_database", side_effect=TimeoutError("offline")) as ping_database:
             response = TestClient(main.app).get("/healthz")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+        ping_database.assert_not_called()
 
-    def test_healthz_returns_503_when_database_is_unavailable(self):
+    def test_readyz_returns_ok_when_database_is_available(self):
+        with patch("app.api.main.ping_database", return_value=True):
+            response = TestClient(main.app).get("/readyz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_readyz_returns_503_when_database_is_unavailable(self):
         with patch("app.api.main.ping_database", side_effect=TimeoutError("offline")):
-            response = TestClient(main.app).get("/healthz")
+            response = TestClient(main.app).get("/readyz")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json(), {"detail": "Service unavailable"})
 
@@ -54,8 +62,7 @@ class ApiCompatibilityTests(unittest.TestCase):
         ensure_indexes.assert_called_once_with()
 
     def test_security_headers_remain_present_on_health_response(self):
-        with patch("app.api.main.ping_database", return_value=True):
-            response = TestClient(main.app).get("/healthz")
+        response = TestClient(main.app).get("/healthz")
         self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
         self.assertEqual(response.headers.get("Referrer-Policy"), "no-referrer")
         self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
