@@ -7,6 +7,10 @@ import logging
 import os
 import re
 import requests
+import smtplib
+import ssl
+from email.message import EmailMessage
+from email.utils import formataddr
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -97,61 +101,43 @@ def _safe_projection(fields: tuple[str, ...]) -> dict[str, int]:
     return {"_id": 0, **{field: 1 for field in fields}}
 
 
-def _send_resend_verification(recipient: str, verification_url: str) -> None:
-    """Deliver a Firebase-generated verification link through Resend."""
-    api_key = os.getenv("RESEND_API_KEY", "").strip()
-    sender = os.getenv("RESEND_FROM_EMAIL", "").strip()
-    if not api_key or not sender:
-        logger.error(
-            "resend_configuration_missing api_key=%s from_email=%s",
-            bool(api_key), bool(sender),
-        )
-        raise RuntimeError("Resend email sender is not configured on the server")
+def _send_gmail_verification(recipient: str, verification_url: str) -> None:
+    """Deliver a Firebase-generated verification link through the configured Gmail account."""
+    smtp_user = os.getenv("GMAIL_SMTP_USER", "").strip()
+    app_password = os.getenv("GMAIL_SMTP_APP_PASSWORD", "").replace(" ", "").strip()
+    sender_name = os.getenv("GMAIL_FROM_NAME", "Dautu").strip() or "Dautu"
+    if not smtp_user or not app_password:
+        logger.error("gmail_smtp_configuration_missing username=%s app_password=%s", bool(smtp_user), bool(app_password))
+        raise RuntimeError("Gmail SMTP credentials are not configured on the server")
 
-    payload = {
-        "from": sender,
-        "to": [recipient],
-        "subject": "Xác minh email tài khoản Dautu",
-        "text": (
-            "Xin chào,\n\n"
-            "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
-            "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
-            f"{verification_url}\n\n"
-            "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
-        ),
-        "html": (
-            "<p>Xin chào,</p>"
-            "<p>Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu.</p>"
-            f'<p><a href="{verification_url}">Xác minh email Dautu</a></p>'
-            "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>"
-        ),
-    }
+    message = EmailMessage()
+    message["From"] = formataddr((sender_name, smtp_user))
+    message["To"] = recipient
+    message["Subject"] = "Xác minh email tài khoản Dautu"
+    message.set_content(
+        "Xin chào,\n\n"
+        "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
+        "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
+        f"{verification_url}\n\n"
+        "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
+    )
+    message.add_alternative(
+        "<p>Xin chào,</p><p>Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu.</p>"
+        f'<p><a href="{verification_url}">Xác minh email Dautu</a></p>'
+        "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>",
+        subtype="html",
+    )
     try:
-        response = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            json=payload,
-            timeout=20,
-        )
-        if not response.ok:
-            logger.error(
-                "resend_delivery_rejected status=%s request_id=%s",
-                response.status_code,
-                response.headers.get("x-resend-id") or response.headers.get("x-request-id"),
-            )
-            response.raise_for_status()
-        logger.info(
-            "resend_email_accepted status=%s request_id=%s",
-            response.status_code,
-            response.headers.get("x-resend-id") or response.headers.get("x-request-id"),
-        )
-    except requests.RequestException as exc:
-        logger.error("resend_delivery_failed error_type=%s", type(exc).__name__)
-        raise RuntimeError("Resend could not accept the verification email") from exc
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20, context=ssl.create_default_context()) as smtp:
+            smtp.login(smtp_user, app_password)
+            refused = smtp.send_message(message)
+            if refused:
+                logger.error("gmail_smtp_recipient_rejected recipient_count=%s", len(refused))
+                raise RuntimeError("Gmail SMTP rejected the verification recipient")
+        logger.info("gmail_smtp_email_accepted")
+    except (smtplib.SMTPException, OSError) as exc:
+        logger.error("gmail_smtp_delivery_failed error_type=%s", type(exc).__name__)
+        raise RuntimeError("Gmail SMTP could not accept the verification email") from exc
 
 
 @lru_cache(maxsize=1)
@@ -174,7 +160,7 @@ def send_verification_email(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> dict[str, str]:
-    """Generate a Firebase verification link and deliver it through Resend.
+    """Generate a Firebase verification link and deliver it through Gmail SMTP.
 
     The caller must already be signed in to Firebase, but the email does not need
     to be verified yet. The server never accepts a recipient address from the
@@ -238,14 +224,14 @@ def send_verification_email(
             detail="Không tạo được liên kết xác minh. Vui lòng thử lại sau.",
         ) from exc
 
-    logger.info("verification_resend_delivery_started")
+    logger.info("verification_gmail_delivery_started")
     try:
-        _send_resend_verification(email, verification_url)
+        _send_gmail_verification(email, verification_url)
     except Exception as exc:
-        logger.error("verification_resend_delivery_failed error_type=%s", type(exc).__name__)
+        logger.error("verification_gmail_delivery_failed error_type=%s", type(exc).__name__)
         raise HTTPException(
             status_code=503,
-            detail="Máy chủ chưa gửi được email. Vui lòng kiểm tra RESEND_API_KEY và RESEND_FROM_EMAIL trên Render.",
+            detail="Máy chủ chưa gửi được email. Vui lòng kiểm tra GMAIL_SMTP_USER và GMAIL_SMTP_APP_PASSWORD trên Render.",
         ) from exc
     logger.info("verification_email_sent")
     return {"status": "sent", "message": "Verification email sent"}
@@ -282,30 +268,27 @@ def _enforce_diagnostic_rate_limit(client_key: str, now: float | None = None) ->
 
 @router.get("/api/test-send-mail")
 def test_send_mail_diagnostic(request: Request) -> dict[str, Any]:
-    """Safe browser check of mail-related configuration; does not send a message."""
+    """Safe browser check of Gmail SMTP configuration; does not send a message."""
     client_key = request.client.host if request.client else "unknown"
     _enforce_diagnostic_rate_limit(client_key)
-    resend_api_key = bool(os.getenv("RESEND_API_KEY", "").strip())
-    resend_from = bool(os.getenv("RESEND_FROM_EMAIL", "").strip())
+    gmail_user = bool(os.getenv("GMAIL_SMTP_USER", "").strip())
+    gmail_password = bool(os.getenv("GMAIL_SMTP_APP_PASSWORD", "").strip())
     firebase_credentials = bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip())
     frontend_url_configured = bool(os.getenv("FRONTEND_URL", "").strip())
-    resend_configured = resend_api_key and resend_from
-    logger.info(
-        "mail_diagnostic_completed resend_configured=%s firebase_credentials_configured=%s frontend_url_configured=%s",
-        resend_configured, firebase_credentials, frontend_url_configured,
-    )
+    gmail_configured = gmail_user and gmail_password
+    logger.info("mail_diagnostic_completed gmail_smtp_configured=%s firebase_credentials_configured=%s frontend_url_configured=%s", gmail_configured, firebase_credentials, frontend_url_configured)
     return {
-        "status": "ok" if resend_configured and firebase_credentials else "needs_configuration",
-        "resend": {
-            "api_key_configured": resend_api_key,
-            "from_address_configured": resend_from,
-            "configuration_complete": resend_configured,
+        "status": "ok" if gmail_configured and firebase_credentials else "needs_configuration",
+        "gmail_smtp": {
+            "username_configured": gmail_user,
+            "app_password_configured": gmail_password,
+            "configuration_complete": gmail_configured,
         },
         "firebase_service_account_configured": firebase_credentials,
         "frontend_url_configured": frontend_url_configured,
         "frontend_url_uses_default": not frontend_url_configured,
         "email_sent": False,
-        "note": "This endpoint checks configuration presence only. It does not connect to Resend or send email.",
+        "note": "This endpoint checks configuration presence only. It does not connect to Gmail SMTP or send email.",
     }
 
 

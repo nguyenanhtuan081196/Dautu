@@ -419,46 +419,32 @@ class MailDiagnosticTests(unittest.TestCase):
     def setUp(self):
         main._test_diagnostic_state.clear()
 
-    def test_public_browser_diagnostic_reports_resend_configuration_without_sending(self):
+    def test_public_browser_diagnostic_reports_gmail_configuration_without_sending(self):
         request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
-        with patch.dict(
-            "os.environ",
-            {
-                "RESEND_API_KEY": "re_test_key_not_real",
-                "RESEND_FROM_EMAIL": "Dautu <no-reply@example.com>",
-                "FIREBASE_SERVICE_ACCOUNT_JSON": "{configured}",
-                "FRONTEND_URL": "https://example.com",
-            },
-            clear=True,
-        ):
+        with patch.dict("os.environ", {
+            "GMAIL_SMTP_USER":"owner@gmail.com",
+            "GMAIL_SMTP_APP_PASSWORD":"sensitive-app-password",
+            "FIREBASE_SERVICE_ACCOUNT_JSON":"{configured}",
+            "FRONTEND_URL":"https://example.com",
+        }, clear=True):
             result = main.test_send_mail_diagnostic(request)
-
         self.assertEqual(result["status"], "ok")
-        self.assertTrue(result["resend"]["configuration_complete"])
-        self.assertTrue(result["resend"]["api_key_configured"])
-        self.assertTrue(result["resend"]["from_address_configured"])
+        self.assertTrue(result["gmail_smtp"]["configuration_complete"])
+        self.assertTrue(result["gmail_smtp"]["username_configured"])
+        self.assertTrue(result["gmail_smtp"]["app_password_configured"])
         self.assertTrue(result["firebase_service_account_configured"])
         self.assertTrue(result["frontend_url_configured"])
         self.assertFalse(result["email_sent"])
-        self.assertIn("does not connect to Resend", result["note"])
+        self.assertIn("does not connect to Gmail SMTP", result["note"])
+        self.assertNotIn("sensitive-app-password", str(result))
 
-    def test_public_browser_diagnostic_does_not_reveal_resend_secrets(self):
+    def test_public_browser_diagnostic_reports_missing_gmail_configuration(self):
         request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.2"))
-        with patch.dict(
-            "os.environ",
-            {
-                "RESEND_API_KEY": "sensitive-resend-value",
-                "RESEND_FROM_EMAIL": "",
-            },
-            clear=True,
-        ):
+        with patch.dict("os.environ", {"GMAIL_SMTP_USER":"", "GMAIL_SMTP_APP_PASSWORD":""}, clear=True):
             result = main.test_send_mail_diagnostic(request)
-
-        serialized = str(result)
-        self.assertNotIn("sensitive-resend-value", serialized)
         self.assertEqual(result["status"], "needs_configuration")
-        self.assertFalse(result["resend"]["configuration_complete"])
-        self.assertFalse(result["resend"]["from_address_configured"])
+        self.assertFalse(result["gmail_smtp"]["configuration_complete"])
+        self.assertFalse(result["gmail_smtp"]["app_password_configured"])
 
 
 if __name__ == "__main__":
