@@ -4,19 +4,9 @@ Website không gửi email trực tiếp từ trình duyệt. Firebase Authentic
 
 Firebase vẫn quản lý tài khoản, mật khẩu và trạng thái email_verified. Gmail chỉ vận chuyển email; người nhận bấm liên kết Firebase để xác minh.
 
-## 1. Chuẩn bị tài khoản Gmail
+## 1. Tài khoản gửi thư
 
-Đặt GMAIL_SMTP_USER bằng địa chỉ Gmail anh đã cấu hình trên Render (hiện tại: mimo.homeserver@gmail.com). Nếu đổi tài khoản gửi, cập nhật biến này trong Render Environment.
-
-1. Đăng nhập đúng tài khoản Gmail gửi thư.
-2. Bật Xác minh 2 bước (2-Step Verification) trong Google Account.
-3. Mở phần bảo mật tài khoản → App passwords.
-4. Tạo App Password riêng, ví dụ tên Dautu Render.
-5. Sao chép mật khẩu ứng dụng 16 ký tự.
-
-App Password chỉ có khi tài khoản đủ điều kiện và đã bật 2-Step Verification. Một số tài khoản tổ chức, Advanced Protection hoặc cấu hình chỉ dùng security key có thể không được cấp App Password. Khi đó cần chuyển sang OAuth 2.0, không dùng mật khẩu tài khoản thường.
-
-KHÔNG gửi App Password qua chat, không commit lên GitHub, không đặt trong mã nguồn. Chỉ lưu trong Render Environment. Nếu bị lộ, thu hồi App Password và tạo cái mới.
+Hệ thống hiện sử dụng tài khoản gửi thư đã được chủ dự án cấu hình: `mimo.homeserver@gmail.com`. Thông tin xác thực SMTP được quản lý riêng tư và lưu trong Render Environment; tài liệu này không chứa hướng dẫn tạo hoặc quản lý App Password.
 
 ## 2. Cấu hình Render
 
