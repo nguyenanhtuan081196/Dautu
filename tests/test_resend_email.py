@@ -1,39 +1,40 @@
-"""Unit tests for Resend verification email delivery."""
+"""Unit tests for Gmail SMTP verification email delivery."""
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, patch
+from app.api.main import _send_gmail_verification
 
-from app.api.main import _send_resend_verification
 
-
-class ResendVerificationTests(unittest.TestCase):
-    @patch.dict("os.environ", {"RESEND_API_KEY": "re_test_key", "RESEND_FROM_EMAIL": "Dautu <no-reply@example.com>"})
-    @patch("app.api.main.requests.post")
-    def test_sends_firebase_link_through_resend_api(self, post):
-        post.return_value = Mock(ok=True, status_code=200, headers={"x-resend-id": "email_123"})
-        _send_resend_verification("user@example.net", "https://firebase.test/action?oobCode=abc")
-        post.assert_called_once()
-        args, kwargs = post.call_args
-        self.assertEqual(args[0], "https://api.resend.com/emails")
-        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer re_test_key")
-        self.assertEqual(kwargs["json"]["from"], "Dautu <no-reply@example.com>")
-        self.assertEqual(kwargs["json"]["to"], ["user@example.net"])
-        self.assertIn("https://firebase.test/action?oobCode=abc", kwargs["json"]["text"])
+class GmailVerificationTests(unittest.TestCase):
+    @patch.dict("os.environ", {"GMAIL_SMTP_USER":"owner@gmail.com","GMAIL_SMTP_APP_PASSWORD":"abcd efgh ijkl mnop","GMAIL_FROM_NAME":"Dautu"}, clear=True)
+    @patch("app.api.main.smtplib.SMTP_SSL")
+    def test_sends_firebase_link_through_gmail_smtp(self, smtp_ssl):
+        smtp = MagicMock()
+        smtp_ssl.return_value.__enter__.return_value = smtp
+        _send_gmail_verification("user@example.net", "https://firebase.test/action?oobCode=abc")
+        args, kwargs = smtp_ssl.call_args
+        self.assertEqual(args[:2], ("smtp.gmail.com", 465))
         self.assertEqual(kwargs["timeout"], 20)
+        smtp.login.assert_called_once_with("owner@gmail.com", "abcdefghijklmnop")
+        message = smtp.send_message.call_args.args[0]
+        self.assertIn("Dautu", message["From"])
+        self.assertIn("owner@gmail.com", message["From"])
+        self.assertEqual(message["To"], "user@example.net")
+        self.assertIn("https://firebase.test/action?oobCode=abc", message.get_body().get_content())
 
     @patch.dict("os.environ", {}, clear=True)
-    def test_requires_resend_key_and_sender(self):
+    def test_requires_gmail_username_and_app_password(self):
         with self.assertRaises(RuntimeError):
-            _send_resend_verification("user@example.net", "https://firebase.test/action")
+            _send_gmail_verification("user@example.net", "https://firebase.test/action")
 
-    @patch.dict("os.environ", {"RESEND_API_KEY": "re_test_key", "RESEND_FROM_EMAIL": "Dautu <no-reply@example.com>"})
-    @patch("app.api.main.requests.post")
-    def test_provider_rejection_is_reported(self, post):
-        import requests
-        response = Mock(ok=False, status_code=403, headers={})
-        response.raise_for_status.side_effect = requests.HTTPError("403 Forbidden")
-        post.return_value = response
+    @patch.dict("os.environ", {"GMAIL_SMTP_USER":"owner@gmail.com","GMAIL_SMTP_APP_PASSWORD":"abcdefghijklmnop"}, clear=True)
+    @patch("app.api.main.smtplib.SMTP_SSL")
+    def test_smtp_authentication_failure_is_reported(self, smtp_ssl):
+        import smtplib
+        smtp = MagicMock()
+        smtp.login.side_effect = smtplib.SMTPAuthenticationError(535, b"auth failed")
+        smtp_ssl.return_value.__enter__.return_value = smtp
         with self.assertRaises(RuntimeError):
-            _send_resend_verification("user@example.net", "https://firebase.test/action")
+            _send_gmail_verification("user@example.net", "https://firebase.test/action")
 
 
 if __name__ == "__main__":
