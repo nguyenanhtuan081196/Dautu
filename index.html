@@ -68,7 +68,7 @@
                     <input type="password" id="login-password" required class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500">
                 </div>
                 <div id="login-error" class="text-xs text-rose-400 hidden"></div>
-                <button type="submit" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition text-sm shadow-lg shadow-emerald-600/30">
+                <button id="login-submit-btn" type="submit" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition text-sm shadow-lg shadow-emerald-600/30">
                     Đăng Nhập Ngay
                 </button>
                 <button type="button" onclick="sendVerificationEmail()" class="w-full text-[11px] text-slate-400 hover:text-emerald-300 transition">
@@ -555,12 +555,10 @@
             }
             const user = auth.currentUser;
             if (!user) throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
-            const token = await user.getIdToken();
-            // Every data request gets a unique URL so intermediaries and browser
-            // caches cannot reuse an earlier API response.
+
             const requestUrl = new URL(path, API_BASE_URL);
             requestUrl.searchParams.set('_ts', String(Date.now()));
-            const response = await fetch(requestUrl.toString(), {
+            const send = async (token) => fetch(requestUrl.toString(), {
                 method: 'GET',
                 headers: {
                     'Authorization': 'Bearer ' + token,
@@ -569,13 +567,24 @@
                 },
                 cache: 'no-store'
             });
+
+            // Refresh an expired/revoked-looking ID token once before showing an
+            // authentication error. Do not loop or silently swallow 401/403.
+            let token = await user.getIdToken();
+            let response = await send(token);
+            if (response.status === 401) {
+                token = await user.getIdToken(true);
+                response = await send(token);
+            }
             if (!response.ok) {
                 let detail = 'Yêu cầu API thất bại (' + response.status + ')';
                 try {
                     const payload = await response.json();
                     if (payload && payload.detail) detail = payload.detail;
                 } catch (_) {}
-                throw new Error(detail);
+                const error = new Error(detail);
+                error.statusCode = response.status;
+                throw error;
             }
             return response.json();
         }
@@ -588,11 +597,13 @@
                 await user.reload(); user = auth.currentUser;
                 if (!user) throw new Error('Phiên đăng nhập không còn hợp lệ.');
                 await user.getIdToken(true);
-                const emailKey = (user.email || '').trim().toLowerCase();
-                if (!user.emailVerified && emailKey !== 'nguyenanhtuan081196@gmail.com') {
+                if (!user.emailVerified) {
                     authOverlay.classList.remove('hidden'); expiredModal.classList.add('hidden');
                     const authError = document.getElementById('login-error');
-                    if (authError) { authError.innerText = 'Email chưa được xác minh. Hãy mở email xác minh hoặc yêu cầu gửi lại email xác minh.'; authError.classList.remove('hidden'); }
+                    if (authError) {
+                        authError.innerText = 'Email chưa được xác minh. Hãy mở email xác minh trong hộp thư (kiểm tra cả Spam), sau đó đăng xuất và đăng nhập lại.';
+                        authError.classList.remove('hidden');
+                    }
                     return;
                 }
                 const account = await apiFetch('/api/auth/me');
@@ -608,7 +619,22 @@
                 console.error('Không thể xác minh quyền truy cập qua Backend:', err);
                 authOverlay.classList.remove('hidden');
                 const authError = document.getElementById('login-error');
-                if (authError) { authError.innerText = err.message || 'Không thể xác minh quyền truy cập. Vui lòng thử lại.'; authError.classList.remove('hidden'); }
+                if (authError) {
+                    let message = err.message || 'Không thể xác minh quyền truy cập. Vui lòng thử lại.';
+                    if (err.statusCode === 401 && /subscription has expired/i.test(message)) {
+                        message = 'Tài khoản đã hết hạn sử dụng. Vui lòng liên hệ Admin để gia hạn.';
+                    } else if (err.statusCode === 401) {
+                        message = 'Phiên Firebase không hợp lệ hoặc đã hết hạn. Hãy đăng xuất, đăng nhập lại; nếu vẫn lỗi, tải lại trang.';
+                    } else if (err.statusCode === 403 && /Email verification is required/i.test(message)) {
+                        message = 'Tài khoản chưa xác minh email nên máy chủ từ chối truy cập. Hãy xác minh email trước khi đăng nhập.';
+                    } else if (err.statusCode === 403) {
+                        message = 'Máy chủ đã nhận diện tài khoản nhưng từ chối quyền truy cập: ' + message;
+                    } else if (err.statusCode >= 500) {
+                        message = 'Máy chủ xác thực đang gặp sự cố (' + err.statusCode + '): ' + message;
+                    }
+                    authError.innerText = message;
+                    authError.classList.remove('hidden');
+                }
             }
         });
 
@@ -640,15 +666,36 @@
 
         async function handleLogin(e) {
             e.preventDefault();
-            const email = document.getElementById('login-email').value;
+            const email = document.getElementById('login-email').value.trim();
             const pass = document.getElementById('login-password').value;
             const errBox = document.getElementById('login-error');
+            const submitBtn = document.getElementById('login-submit-btn');
             errBox.classList.add('hidden');
+            if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = 'Đang đăng nhập...'; }
             try {
-                await auth.signInWithEmailAndPassword(email, pass);
+                const credential = await auth.signInWithEmailAndPassword(email, pass);
+                await credential.user.reload();
+                if (!credential.user.emailVerified) {
+                    errBox.innerText = 'Đăng nhập Firebase thành công nhưng email chưa được xác minh. Hãy mở email xác minh trước khi truy cập hệ thống.';
+                    errBox.classList.remove('hidden');
+                } else {
+                    errBox.innerText = 'Đăng nhập thành công. Đang kiểm tra quyền truy cập...';
+                    errBox.classList.remove('hidden');
+                }
             } catch (err) {
-                errBox.innerText = "Lỗi đăng nhập: " + err.message;
+                const code = err && err.code;
+                const friendly = {
+                    'auth/invalid-credential': 'Email hoặc mật khẩu không chính xác.',
+                    'auth/wrong-password': 'Mật khẩu không chính xác.',
+                    'auth/user-not-found': 'Không tìm thấy tài khoản với email này.',
+                    'auth/too-many-requests': 'Đăng nhập tạm thời bị khóa do quá nhiều lần thử. Hãy chờ rồi thử lại.',
+                    'auth/network-request-failed': 'Không thể kết nối Firebase. Kiểm tra mạng rồi thử lại.',
+                    'auth/user-disabled': 'Tài khoản Firebase đã bị vô hiệu hóa.'
+                };
+                errBox.innerText = 'Lỗi đăng nhập: ' + (friendly[code] || err.message || 'Không xác định được lỗi.');
                 errBox.classList.remove('hidden');
+            } finally {
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = 'Đăng Nhập Ngay'; }
             }
         }
 

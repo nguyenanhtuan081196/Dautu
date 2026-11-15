@@ -460,7 +460,29 @@ class MailDiagnosticTests(unittest.TestCase):
         self.assertEqual(result["status"], "needs_configuration")
         self.assertFalse(result["smtp"]["configuration_complete"])
 
-    def test_smtp_oserror_logs_operation_errno_and_safe_detail(self):
+    def test_invalid_smtp_port_reports_actionable_configuration_error(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SMTP_USER": "sender@example.com",
+                "SMTP_APP_PASSWORD": "test-app-password",
+                "SMTP_FROM_EMAIL": "sender@example.com",
+                "SMTP_HOST": "smtp.gmail.com",
+                "SMTP_PORT": "587/tls",
+            },
+            clear=True,
+        ):
+            with self.assertLogs(main.logger, level="ERROR") as captured:
+                with self.assertRaisesRegex(RuntimeError, "SMTP_PORT must be a numeric port"):
+                    main._send_gmail_verification(
+                        "recipient@example.com",
+                        "https://example.com/verification-secret",
+                    )
+
+        self.assertIn("smtp_configuration_invalid field=SMTP_PORT", "\\n".join(captured.output))
+        self.assertNotIn("test-app-password", "\\n".join(captured.output))
+
+    def test_smtp_connection_oserror_falls_back_to_ssl_465(self):
         with patch.dict(
             "os.environ",
             {
@@ -474,22 +496,17 @@ class MailDiagnosticTests(unittest.TestCase):
         ), patch(
             "app.api.main.smtplib.SMTP",
             side_effect=OSError(101, "Network is unreachable"),
-        ):
-            with self.assertLogs(main.logger, level="ERROR") as captured:
-                with self.assertRaises(OSError):
-                    main._send_gmail_verification(
-                        "recipient@example.com",
-                        "https://example.com/verification-secret",
-                    )
+        ), patch("app.api.main.smtplib.SMTP_SSL") as smtp_ssl:
+            ssl_server = smtp_ssl.return_value.__enter__.return_value
+            main._send_gmail_verification(
+                "recipient@example.com",
+                "https://example.com/verification-secret",
+            )
 
-        diagnostic = "\\n".join(captured.output)
-        self.assertIn("stage=connect", diagnostic)
-        self.assertIn("error_type=OSError", diagnostic)
-        self.assertIn("errno=101", diagnostic)
-        self.assertIn("Network is unreachable", diagnostic)
-        self.assertNotIn("test-app-password", diagnostic)
-        self.assertNotIn("recipient@example.com", diagnostic)
-        self.assertNotIn("verification-secret", diagnostic)
+        smtp_ssl.assert_called_once()
+        self.assertEqual(smtp_ssl.call_args.args[:2], ("smtp.gmail.com", 465))
+        ssl_server.login.assert_called_once_with("sender@example.com", "test-app-password")
+        ssl_server.send_message.assert_called_once()
 
     def test_smtp_authentication_error_logs_code_without_provider_response(self):
         auth_error = main.smtplib.SMTPAuthenticationError(535, b"private provider response")
@@ -503,7 +520,9 @@ class MailDiagnosticTests(unittest.TestCase):
                 "SMTP_PORT": "587",
             },
             clear=True,
-        ), patch("app.api.main.smtplib.SMTP") as smtp:
+        ), patch("app.api.main.smtplib.SMTP") as smtp, patch(
+            "app.api.main.smtplib.SMTP_SSL"
+        ) as smtp_ssl:
             smtp.return_value.__enter__.return_value.ehlo.return_value = (250, b"ok")
             smtp.return_value.__enter__.return_value.starttls.return_value = (220, b"ready")
             smtp.return_value.__enter__.return_value.login.side_effect = auth_error
@@ -514,6 +533,7 @@ class MailDiagnosticTests(unittest.TestCase):
                         "https://example.com/verification-secret",
                     )
 
+        smtp_ssl.assert_not_called()
         diagnostic = "\\n".join(captured.output)
         self.assertIn("stage=authenticate", diagnostic)
         self.assertIn("smtp_code=535", diagnostic)
