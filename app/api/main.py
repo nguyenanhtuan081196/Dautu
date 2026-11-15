@@ -117,11 +117,11 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
     message["From"] = f"Dautu <{sender}>"
     message["To"] = recipient
     message.set_content(
-        "Xin chào,\\n\\n"
+        "Xin chào,\n\n"
         "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
-        "Vui lòng mở liên kết dưới đây để xác minh:\\n\\n"
-        f"{verification_url}\\n\\n"
-        "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\\n"
+        "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
+        f"{verification_url}\n\n"
+        "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
     )
     message.add_alternative(
         "<p>Xin chào,</p><p>Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu.</p>"
