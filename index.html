@@ -58,6 +58,8 @@
                 <button type="button" onclick="switchAuthTab('register')" id="tab-register-btn" class="flex-1 pb-2 text-xs font-bold text-slate-400 hover:text-white transition">Đăng Ký Tài Khoản</button>
             </div>
 
+            <div id="auth-status-message" role="alert" aria-live="polite" class="hidden mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-xs leading-relaxed text-amber-200"></div>
+
             <form id="login-form" onsubmit="handleLogin(event)" class="space-y-4">
                 <div>
                     <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1">Email</label>
@@ -549,6 +551,13 @@
         const auth = firebase.auth();
         const API_BASE_URL = String(window.DAUTU_API_BASE_URL || 'https://dautu-api.onrender.com').trim().replace(/\/+$/, '');
 
+        function showAuthStatus(message) {
+            const banner = document.getElementById('auth-status-message');
+            if (!banner) return;
+            banner.textContent = message || '';
+            banner.classList.toggle('hidden', !message);
+        }
+
         async function apiFetch(path) {
             if (!API_BASE_URL) {
                 throw new Error('API chưa được cấu hình. Vui lòng thiết lập DAUTU_API_BASE_URL trước khi sử dụng.');
@@ -601,7 +610,9 @@
                     authOverlay.classList.remove('hidden'); expiredModal.classList.add('hidden');
                     const authError = document.getElementById('login-error');
                     if (authError) {
-                        authError.innerText = 'Email chưa được xác minh. Hãy mở email xác minh trong hộp thư (kiểm tra cả Spam), sau đó đăng xuất và đăng nhập lại.';
+                        const message = 'Email chưa được xác minh. Hãy mở email trong Inbox hoặc Spam, bấm Gửi lại email xác minh nếu cần, rồi đăng nhập lại.';
+                        showAuthStatus(message);
+                        authError.innerText = message;
                         authError.classList.remove('hidden');
                     }
                     return;
@@ -632,6 +643,7 @@
                     } else if (err.statusCode >= 500) {
                         message = 'Máy chủ xác thực đang gặp sự cố (' + err.statusCode + '): ' + message;
                     }
+                    showAuthStatus(message);
                     authError.innerText = message;
                     authError.classList.remove('hidden');
                 }
@@ -671,12 +683,15 @@
             const errBox = document.getElementById('login-error');
             const submitBtn = document.getElementById('login-submit-btn');
             errBox.classList.add('hidden');
+            showAuthStatus('');
             if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = 'Đang đăng nhập...'; }
             try {
                 const credential = await auth.signInWithEmailAndPassword(email, pass);
                 await credential.user.reload();
                 if (!credential.user.emailVerified) {
-                    errBox.innerText = 'Đăng nhập Firebase thành công nhưng email chưa được xác minh. Hãy mở email xác minh trước khi truy cập hệ thống.';
+                    const message = 'Đăng nhập Firebase thành công nhưng email chưa được xác minh. Hãy mở email xác minh hoặc bấm “Gửi lại email xác minh” trước khi truy cập hệ thống.';
+                    showAuthStatus(message);
+                    errBox.innerText = message;
                     errBox.classList.remove('hidden');
                 } else {
                     errBox.innerText = 'Đăng nhập thành công. Đang kiểm tra quyền truy cập...';
@@ -692,7 +707,9 @@
                     'auth/network-request-failed': 'Không thể kết nối Firebase. Kiểm tra mạng rồi thử lại.',
                     'auth/user-disabled': 'Tài khoản Firebase đã bị vô hiệu hóa.'
                 };
-                errBox.innerText = 'Lỗi đăng nhập: ' + (friendly[code] || err.message || 'Không xác định được lỗi.');
+                const message = 'Lỗi đăng nhập: ' + (friendly[code] || err.message || 'Không xác định được lỗi.');
+                showAuthStatus(message);
+                errBox.innerText = message;
                 errBox.classList.remove('hidden');
             } finally {
                 if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = 'Đăng Nhập Ngay'; }
