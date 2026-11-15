@@ -197,3 +197,31 @@ Sau khi có đủ credentials và đã xác nhận key có scope Market Data:
   lịch sử chuẩn nếu chưa có quy tắc đối soát.
 - Chỉ chạy một Render instance. Nhiều instance cần distributed lease/
   leader-election để tránh nhiều collector cùng subscribe và ghi dữ liệu.
+
+
+## 9. Email verification delivery (Gmail SMTP)
+
+Email verification is delivered by the Render API through **Gmail SMTP**. Firebase Authentication remains responsible for account identity and the verified-email state; Firebase Admin SDK generates the verification action link, and Gmail only transports that message.
+
+- Sender account: `mimo.homeserver@gmail.com`.
+- SMTP host: `smtp.gmail.com`.
+- Connection: SSL on port `465`.
+- Required Render Environment variables:
+  - `GMAIL_SMTP_USER=mimo.homeserver@gmail.com`
+  - `GMAIL_SMTP_APP_PASSWORD` — the Google App Password; store only as a Render secret.
+  - `GMAIL_FROM_NAME=Dautu`
+  - `FIREBASE_SERVICE_ACCOUNT_JSON` — Firebase Admin service-account JSON, stored only as a secret.
+  - `FRONTEND_URL` — destination URL used by Firebase's verification action link.
+
+### Create a Gmail App Password
+
+1. Sign in to the Google Account `mimo.homeserver@gmail.com`.
+2. Open Google Account → **Security** and enable **2-Step Verification**.
+3. Open **App passwords** in the Security settings. Google may ask you to sign in again.
+4. Create a new app password, for example with the name `Dautu Render`.
+5. Copy the generated 16-character password and add it to Render as `GMAIL_SMTP_APP_PASSWORD`. Spaces may be removed; the application also strips spaces before SMTP login.
+6. Never commit this password, put it in this document, or share it in chat. If exposed, revoke it in the Google Account and generate a replacement.
+
+App Passwords are available only for eligible Google Accounts with 2-Step Verification enabled. If the App passwords option is unavailable (for example, due to certain organization or Advanced Protection policies), do not use the normal Google account password; use an approved OAuth 2.0 or email-provider integration instead.
+
+No third-party Resend SDK or Resend dependency is used by the current application. Keep SMTP and Firebase credentials exclusively in Render Environment; never store secret values in Git.
