@@ -27,7 +27,7 @@ Bản triển khai hiện tại không sử dụng Resend. Sau khi xác nhận G
 
 ## 3. Kiểm tra
 
-1. Mở endpoint chẩn đoán mail hiện tại. Kết quả chỉ báo có/thiếu biến cấu hình; endpoint không gửi email và không xác thực mật khẩu SMTP.
+1. Nếu cần kiểm tra nhanh biến cấu hình, mở `https://dautu-api.onrender.com/api/test-send-mail`. Endpoint chỉ báo các biến Gmail/Firebase có được khai báo hay không; endpoint không kết nối Gmail, không xác thực App Password và không gửi email.
 2. Dùng tài khoản thử nghiệm do anh kiểm soát, đăng nhập và bấm Gửi lại email xác minh đúng một lần.
 3. Mở Render Logs, tìm gmail_smtp_email_accepted hoặc gmail_smtp_delivery_failed.
 4. Kiểm tra Inbox và Spam của địa chỉ nhận thư.
