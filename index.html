@@ -719,7 +719,7 @@
         async function sendVerificationEmail() {
             const user = auth.currentUser;
             if (!user) {
-                console.warn('[Dautu Auth] Resend verification stopped: no current Firebase user.');
+                console.warn('[Dautu Auth] Email verification retry stopped: no current Firebase user.');
                 alert('Hãy đăng nhập trước, sau đó gửi lại email xác minh.');
                 return;
             }
@@ -727,7 +727,7 @@
             let stage = 'starting';
             try {
                 if (!API_BASE_URL) throw new Error('API_BASE_URL chưa được cấu hình.');
-                console.info('[Dautu Auth] Resend verification started.', {
+                console.info('[Dautu Auth] Email verification retry started.', {
                     stage,
                     apiBase: API_BASE_URL,
                     uidPresent: Boolean(user.uid),
@@ -764,7 +764,7 @@
                 alert('Máy chủ đã gửi email xác minh. Anh hãy kiểm tra Inbox và Spam.');
             } catch (err) {
                 // Never log the Firebase ID token or other credentials.
-                console.error('[Dautu Auth] Resend verification failed.', {
+                console.error('[Dautu Auth] Email verification retry failed.', {
                     stage,
                     name: err && err.name,
                     message: err && err.message,
