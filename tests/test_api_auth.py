@@ -460,6 +460,68 @@ class MailDiagnosticTests(unittest.TestCase):
         self.assertEqual(result["status"], "needs_configuration")
         self.assertFalse(result["smtp"]["configuration_complete"])
 
+    def test_smtp_oserror_logs_operation_errno_and_safe_detail(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SMTP_USER": "sender@example.com",
+                "SMTP_APP_PASSWORD": "test-app-password",
+                "SMTP_FROM_EMAIL": "sender@example.com",
+                "SMTP_HOST": "smtp.gmail.com",
+                "SMTP_PORT": "587",
+            },
+            clear=True,
+        ), patch(
+            "app.api.main.smtplib.SMTP",
+            side_effect=OSError(101, "Network is unreachable"),
+        ):
+            with self.assertLogs(main.logger, level="ERROR") as captured:
+                with self.assertRaises(OSError):
+                    main._send_gmail_verification(
+                        "recipient@example.com",
+                        "https://example.com/verification-secret",
+                    )
+
+        diagnostic = "\\n".join(captured.output)
+        self.assertIn("stage=connect", diagnostic)
+        self.assertIn("error_type=OSError", diagnostic)
+        self.assertIn("errno=101", diagnostic)
+        self.assertIn("Network is unreachable", diagnostic)
+        self.assertNotIn("test-app-password", diagnostic)
+        self.assertNotIn("recipient@example.com", diagnostic)
+        self.assertNotIn("verification-secret", diagnostic)
+
+    def test_smtp_authentication_error_logs_code_without_provider_response(self):
+        auth_error = main.smtplib.SMTPAuthenticationError(535, b"private provider response")
+        with patch.dict(
+            "os.environ",
+            {
+                "SMTP_USER": "sender@example.com",
+                "SMTP_APP_PASSWORD": "test-app-password",
+                "SMTP_FROM_EMAIL": "sender@example.com",
+                "SMTP_HOST": "smtp.gmail.com",
+                "SMTP_PORT": "587",
+            },
+            clear=True,
+        ), patch("app.api.main.smtplib.SMTP") as smtp:
+            smtp.return_value.__enter__.return_value.ehlo.return_value = (250, b"ok")
+            smtp.return_value.__enter__.return_value.starttls.return_value = (220, b"ready")
+            smtp.return_value.__enter__.return_value.login.side_effect = auth_error
+            with self.assertLogs(main.logger, level="ERROR") as captured:
+                with self.assertRaises(main.smtplib.SMTPAuthenticationError):
+                    main._send_gmail_verification(
+                        "recipient@example.com",
+                        "https://example.com/verification-secret",
+                    )
+
+        diagnostic = "\\n".join(captured.output)
+        self.assertIn("stage=authenticate", diagnostic)
+        self.assertIn("smtp_code=535", diagnostic)
+        self.assertNotIn("private provider response", diagnostic)
+        self.assertNotIn("test-app-password", diagnostic)
+        self.assertNotIn("recipient@example.com", diagnostic)
+        self.assertNotIn("verification-secret", diagnostic)
+
 
 if __name__ == "__main__":
     unittest.main()
