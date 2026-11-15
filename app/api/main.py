@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import requests
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -112,11 +113,11 @@ def _send_resend_verification(recipient: str, verification_url: str) -> None:
         "to": [recipient],
         "subject": "Xác minh email tài khoản Dautu",
         "text": (
-            "Xin chào,\\n\\n"
+            "Xin chào,\n\n"
             "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
-            "Vui lòng mở liên kết dưới đây để xác minh:\\n\\n"
-            f"{verification_url}\\n\\n"
-            "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\\n"
+            "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
+            f"{verification_url}\n\n"
+            "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
         ),
         "html": (
             "<p>Xin chào,</p>"
@@ -304,7 +305,7 @@ def test_send_mail_diagnostic(request: Request) -> dict[str, Any]:
         "frontend_url_configured": frontend_url_configured,
         "frontend_url_uses_default": not frontend_url_configured,
         "email_sent": False,
-        "note": "This endpoint checks configuration presence only. It does not connect to SMTP or send email.",
+        "note": "This endpoint checks configuration presence only. It does not connect to Resend or send email.",
     }
 
 
