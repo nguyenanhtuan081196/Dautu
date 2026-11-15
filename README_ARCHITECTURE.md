@@ -213,15 +213,6 @@ Email verification is delivered by the Render API through **Gmail SMTP**. Fireba
   - `FIREBASE_SERVICE_ACCOUNT_JSON` — Firebase Admin service-account JSON, stored only as a secret.
   - `FRONTEND_URL` — destination URL used by Firebase's verification action link.
 
-### Create a Gmail App Password
-
-1. Sign in to the Google Account `mimo.homeserver@gmail.com`.
-2. Open Google Account → **Security** and enable **2-Step Verification**.
-3. Open **App passwords** in the Security settings. Google may ask you to sign in again.
-4. Create a new app password, for example with the name `Dautu Render`.
-5. Copy the generated 16-character password and add it to Render as `GMAIL_SMTP_APP_PASSWORD`. Spaces may be removed; the application also strips spaces before SMTP login.
-6. Never commit this password, put it in this document, or share it in chat. If exposed, revoke it in the Google Account and generate a replacement.
-
-App Passwords are available only for eligible Google Accounts with 2-Step Verification enabled. If the App passwords option is unavailable (for example, due to certain organization or Advanced Protection policies), do not use the normal Google account password; use an approved OAuth 2.0 or email-provider integration instead.
+The Gmail App Password is maintained privately by the project owner and stored only in Render Environment. This architecture document intentionally does not include instructions for creating or managing that credential.
 
 No third-party Resend SDK or Resend dependency is used by the current application. Keep SMTP and Firebase credentials exclusively in Render Environment; never store secret values in Git.
