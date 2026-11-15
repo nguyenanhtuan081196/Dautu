@@ -6,7 +6,7 @@ Firebase vẫn quản lý tài khoản, mật khẩu và trạng thái email_ver
 
 ## 1. Chuẩn bị tài khoản Gmail
 
-Tài khoản gửi mặc định dự kiến là nguyenanhtuan081196@gmail.com (địa chỉ này đang được cấu hình làm Admin trong backend). Nếu muốn dùng Gmail khác, đặt GMAIL_SMTP_USER bằng địa chỉ đó.
+Đặt GMAIL_SMTP_USER bằng địa chỉ Gmail anh đã cấu hình trên Render (hiện tại: mimo.homeserver@gmail.com). Nếu đổi tài khoản gửi, cập nhật biến này trong Render Environment.
 
 1. Đăng nhập đúng tài khoản Gmail gửi thư.
 2. Bật Xác minh 2 bước (2-Step Verification) trong Google Account.
@@ -24,7 +24,7 @@ Mở Render → service dautu-api → Environment. Thêm:
 
 | Key | Value |
 | --- | --- |
-| GMAIL_SMTP_USER | nguyenanhtuan081196@gmail.com |
+| GMAIL_SMTP_USER | mimo.homeserver@gmail.com |
 | GMAIL_SMTP_APP_PASSWORD | App Password 16 ký tự (có thể nhập liền, không dấu cách) |
 | GMAIL_FROM_NAME | Dautu |
 | FRONTEND_URL | https://mimohouse.ddns.net |
