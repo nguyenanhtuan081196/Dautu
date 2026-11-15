@@ -160,8 +160,9 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
             error_number = getattr(exc, "errno", None)
             error_detail = getattr(exc, "strerror", None)
             logger.error(
-                "smtp_delivery_failed stage=%s error_type=%s errno=%s error_detail=%s",
+                "smtp_delivery_failed stage=%s error_type=%s errno=%s smtp_code=%s error_detail=%s",
                 smtp_stage, type(exc).__name__, error_number,
+                getattr(exc, "smtp_code", None),
                 error_detail[:200] if isinstance(error_detail, str) else None,
             )
             raise
