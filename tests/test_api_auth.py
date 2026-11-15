@@ -460,6 +460,28 @@ class MailDiagnosticTests(unittest.TestCase):
         self.assertEqual(result["status"], "needs_configuration")
         self.assertFalse(result["smtp"]["configuration_complete"])
 
+    def test_invalid_smtp_port_reports_actionable_configuration_error(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SMTP_USER": "sender@example.com",
+                "SMTP_APP_PASSWORD": "test-app-password",
+                "SMTP_FROM_EMAIL": "sender@example.com",
+                "SMTP_HOST": "smtp.gmail.com",
+                "SMTP_PORT": "587/tls",
+            },
+            clear=True,
+        ):
+            with self.assertLogs(main.logger, level="ERROR") as captured:
+                with self.assertRaisesRegex(RuntimeError, "SMTP_PORT must be a numeric port"):
+                    main._send_gmail_verification(
+                        "recipient@example.com",
+                        "https://example.com/verification-secret",
+                    )
+
+        self.assertIn("smtp_configuration_invalid field=SMTP_PORT", "\\n".join(captured.output))
+        self.assertNotIn("test-app-password", "\\n".join(captured.output))
+
     def test_smtp_connection_oserror_falls_back_to_ssl_465(self):
         with patch.dict(
             "os.environ",
