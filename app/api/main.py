@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import smtplib
+import ssl
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -109,19 +110,18 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
         )
         raise RuntimeError("Email sender is not configured on the server")
 
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    logger.info("smtp_connection_start host=%s port=%s", smtp_host, smtp_port)
     message = EmailMessage()
     message["Subject"] = "Xác minh email tài khoản Dautu"
     message["From"] = f"Dautu <{sender}>"
     message["To"] = recipient
     message.set_content(
-        "Xin chào,\n\n"
+        "Xin chào,\\n\\n"
         "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
-        "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
-        f"{verification_url}\n\n"
-        "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
+        "Vui lòng mở liên kết dưới đây để xác minh:\\n\\n"
+        f"{verification_url}\\n\\n"
+        "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\\n"
     )
     message.add_alternative(
         "<p>Xin chào,</p><p>Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu.</p>"
@@ -129,9 +129,7 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
         "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>",
         subtype="html",
     )
-    # Track the last SMTP operation so network/provider failures are actionable.
-    # Never log the exception's full string: provider responses may contain details
-    # that should not be exposed in application logs.
+
     smtp_stage = "connect"
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
@@ -143,28 +141,60 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
             server.ehlo()
             smtp_stage = "authenticate"
             server.login(smtp_user, smtp_password)
-            logger.info("smtp_authentication_succeeded")
+            logger.info("smtp_authentication_succeeded port=%s", smtp_port)
             smtp_stage = "send_message"
             server.send_message(message)
-            logger.info("smtp_message_accepted_by_provider")
+            logger.info("smtp_message_accepted_by_provider port=%s", smtp_port)
+        return
+    except OSError as exc:
+        # Render may block outbound SMTP submission on 587. Retry via implicit
+        # TLS on 465 only when the initial TCP connection itself failed. Never
+        # retry after authentication or send_message errors (avoids duplicates).
+        if smtp_port != 587 or smtp_stage != "connect":
+            error_number = getattr(exc, "errno", None)
+            error_detail = getattr(exc, "strerror", None)
+            logger.error(
+                "smtp_delivery_failed stage=%s error_type=%s errno=%s error_detail=%s",
+                smtp_stage, type(exc).__name__, error_number,
+                error_detail[:200] if isinstance(error_detail, str) else None,
+            )
+            raise
+        logger.warning(
+            "smtp_primary_connection_failed host=%s port=587 error_type=%s errno=%s; retrying port=465 ssl",
+            smtp_host, type(exc).__name__, getattr(exc, "errno", None),
+        )
     except Exception as exc:
-        # Log only safe diagnostics: operation, exception class, errno and
-        # strerror (not SMTP response text, recipient, credentials, or URL).
         error_number = getattr(exc, "errno", None)
         error_detail = getattr(exc, "strerror", None)
-        if isinstance(error_detail, str):
-            error_detail = error_detail[:200]
-        smtp_code = getattr(exc, "smtp_code", None)
         logger.error(
             "smtp_delivery_failed stage=%s error_type=%s errno=%s smtp_code=%s error_detail=%s",
-            smtp_stage,
-            type(exc).__name__,
-            error_number,
-            smtp_code,
-            error_detail,
+            smtp_stage, type(exc).__name__, error_number,
+            getattr(exc, "smtp_code", None),
+            error_detail[:200] if isinstance(error_detail, str) else None,
         )
         raise
 
+    smtp_stage = "connect_ssl"
+    try:
+        with smtplib.SMTP_SSL(
+            smtp_host, 465, timeout=20, context=ssl.create_default_context()
+        ) as server:
+            smtp_stage = "authenticate_ssl"
+            server.login(smtp_user, smtp_password)
+            logger.info("smtp_authentication_succeeded port=465 mode=ssl")
+            smtp_stage = "send_message_ssl"
+            server.send_message(message)
+            logger.info("smtp_message_accepted_by_provider port=465 mode=ssl")
+    except Exception as exc:
+        error_number = getattr(exc, "errno", None)
+        error_detail = getattr(exc, "strerror", None)
+        logger.error(
+            "smtp_delivery_failed stage=%s error_type=%s errno=%s smtp_code=%s error_detail=%s",
+            smtp_stage, type(exc).__name__, error_number,
+            getattr(exc, "smtp_code", None),
+            error_detail[:200] if isinstance(error_detail, str) else None,
+        )
+        raise
 
 @lru_cache(maxsize=1)
 def _firebase_app():
