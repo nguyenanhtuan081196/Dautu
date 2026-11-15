@@ -129,18 +129,40 @@ def _send_gmail_verification(recipient: str, verification_url: str) -> None:
         "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>",
         subtype="html",
     )
+    # Track the last SMTP operation so network/provider failures are actionable.
+    # Never log the exception's full string: provider responses may contain details
+    # that should not be exposed in application logs.
+    smtp_stage = "connect"
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            smtp_stage = "ehlo"
             server.ehlo()
+            smtp_stage = "starttls"
             server.starttls()
+            smtp_stage = "ehlo_after_tls"
             server.ehlo()
+            smtp_stage = "authenticate"
             server.login(smtp_user, smtp_password)
             logger.info("smtp_authentication_succeeded")
+            smtp_stage = "send_message"
             server.send_message(message)
             logger.info("smtp_message_accepted_by_provider")
     except Exception as exc:
-        # Do not log recipient addresses, credentials, or verification URLs.
-        logger.error("smtp_delivery_failed error_type=%s", type(exc).__name__)
+        # Log only safe diagnostics: operation, exception class, errno and
+        # strerror (not SMTP response text, recipient, credentials, or URL).
+        error_number = getattr(exc, "errno", None)
+        error_detail = getattr(exc, "strerror", None)
+        if isinstance(error_detail, str):
+            error_detail = error_detail[:200]
+        smtp_code = getattr(exc, "smtp_code", None)
+        logger.error(
+            "smtp_delivery_failed stage=%s error_type=%s errno=%s smtp_code=%s error_detail=%s",
+            smtp_stage,
+            type(exc).__name__,
+            error_number,
+            smtp_code,
+            error_detail,
+        )
         raise
 
 
