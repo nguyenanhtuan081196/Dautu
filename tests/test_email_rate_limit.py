@@ -166,7 +166,7 @@ class SendVerificationEndpointRateLimitTests(unittest.TestCase):
             patch("app.api.main._firebase_app", return_value=object()),
             patch("app.api.main.firebase_auth.verify_id_token", return_value=claims),
             patch("app.api.main.firebase_auth.generate_email_verification_link", return_value="https://example.test/verify"),
-            patch("app.api.main._send_gmail_verification") as send_email,
+            patch("app.api.main._send_resend_verification") as send_email,
         ):
             main.send_verification_email(request, "Bearer valid-token")
             with self.assertRaises(HTTPException) as error:
