@@ -33,7 +33,7 @@ Giữ nguyên FIREBASE_SERVICE_ACCOUNT_JSON, MONGODB_URI và MONGODB_DATABASE. S
 
 Sau khi cấu hình, lưu và để Render restart/redeploy service.
 
-Sau khi xác nhận Gmail gửi thành công, xóa RESEND_API_KEY và RESEND_FROM_EMAIL khỏi Render. Bản code mới không đọc hai biến này nữa.
+Bản triển khai hiện tại không sử dụng Resend. Sau khi xác nhận Gmail SMTP hoạt động, các biến cũ `RESEND_API_KEY` và `RESEND_FROM_EMAIL` không còn cần thiết và cần được xóa khỏi Render Environment.
 
 ## 3. Kiểm tra
 
