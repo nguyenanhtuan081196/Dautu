@@ -678,7 +678,17 @@ async def shutdown() -> None:
 
 @router.api_route("/healthz", methods=["GET", "HEAD"])
 def healthz() -> dict[str, str]:
-    """Public platform health probe; disclose no dependency or infrastructure details."""
+    """Shallow liveness probe: confirm the API process can serve requests.
+
+    Keep this endpoint independent of databases and other external services so
+    platform monitors can distinguish a live process from dependency outages.
+    """
+    return {"status": "ok"}
+
+
+@router.api_route("/readyz", methods=["GET", "HEAD"])
+def readyz() -> dict[str, str]:
+    """Readiness probe: confirm the API can reach its required MongoDB database."""
     try:
         ping_database()
         return {"status": "ok"}

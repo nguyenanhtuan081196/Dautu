@@ -28,7 +28,8 @@ Browser frontend (GitHub Pages static site)
         |
         +--> authenticated Render API --> MongoDB Atlas
 
-UptimeRobot (external monitor) --> public Render /healthz
+UptimeRobot (external liveness monitor) --> public Render /healthz
+Operations / diagnostics --> public Render /readyz (MongoDB readiness)
 ```
 
 **Source of truth:** MongoDB Atlas is the durable operational data store. Render's filesystem and GitHub are not used as the live stock-data database.
@@ -37,7 +38,8 @@ UptimeRobot (external monitor) --> public Render /healthz
 
 - Render web service: `dautu-api`, FastAPI/Uvicorn, production origin `https://dautu-api.onrender.com`.
 - Merged commits on `main` are deployed by Render Auto-Deploy; confirm each deployment reaches **Live** in Render.
-- `GET /healthz` checks Atlas connectivity and returns HTTP 200 only when the database is reachable.
+- `GET /healthz` is a lightweight liveness probe: HTTP 200 means the API process is serving requests; it does not query MongoDB.
+- `GET /readyz` is the readiness/dependency probe: it pings MongoDB Atlas and returns HTTP 503 when Atlas is unavailable.
 - The static frontend is deployed by `.github/workflows/pages.yml`; its API origin is configured by the `DAUTU_API_BASE_URL` Actions variable.
 - Firebase Authentication provides browser sign-in. The API verifies Firebase ID tokens and checks membership in Firestore.
 
@@ -74,7 +76,7 @@ The API reads live data from Atlas; Render's local filesystem is not the operati
 
 ## 5. UptimeRobot
 
-UptimeRobot is configured outside this repository. Its intended role is to monitor the public `/healthz` endpoint. Dashboard URL, probe interval and current monitor status must be verified in the UptimeRobot account; this repository cannot prove those external settings. A health ping is not a guarantee that the in-process Scheduler remains awake at the scheduled minute.
+UptimeRobot is configured outside this repository. Its intended role is to monitor the public `/healthz` liveness endpoint. Use `/readyz` separately when checking whether MongoDB Atlas is reachable; do not use a database-dependent readiness check as the process liveness monitor. Dashboard URL, probe interval and current monitor status must be verified in the UptimeRobot account; this repository cannot prove those external settings. A health ping is not a guarantee that the in-process Scheduler remains awake at the scheduled minute.
 
 ## 6. GitHub Actions responsibilities
 
