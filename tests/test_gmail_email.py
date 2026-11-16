@@ -2,7 +2,7 @@
 import base64
 import os
 import unittest
-from email import message_from_bytes
+from email import message_from_bytes, policy
 from unittest.mock import MagicMock, patch
 
 from app.email.gmail import GMAIL_SEND_SCOPE, TOKEN_URI, send_verification_email
@@ -33,6 +33,7 @@ class GmailApiSenderTests(unittest.TestCase):
         )
 
         self.assertEqual(result, "gmail-message-id")
+        credentials_factory.return_value.refresh.assert_called_once()
         credentials_factory.assert_called_once_with(
             token=None,
             refresh_token="refresh-token",
@@ -49,7 +50,7 @@ class GmailApiSenderTests(unittest.TestCase):
         call.assert_called_once()
         self.assertEqual(call.call_args.kwargs["userId"], "me")
         raw = call.call_args.kwargs["body"]["raw"]
-        parsed = message_from_bytes(base64.urlsafe_b64decode(raw))
+        parsed = message_from_bytes(base64.urlsafe_b64decode(raw), policy=policy.default)
         self.assertEqual(parsed["To"], "new.user@example.com")
         self.assertIn("Dautu", parsed["From"])
         self.assertIn("Xác minh", parsed["Subject"])
