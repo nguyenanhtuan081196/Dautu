@@ -775,8 +775,10 @@
                 showAuthStatus('Tài khoản đã được tạo. Dautu đang gửi email xác minh qua Gmail…');
                 const result = await requestVerificationEmail(createdUser);
                 const message = 'Đăng ký thành công! ' + (result.message || 'Email xác minh đã được gửi qua Gmail.') + ' Tài khoản ở quyền Guest cho đến khi Admin cấp quyền User.';
-                showAuthStatus(message); errBox.textContent = message; errBox.classList.remove('hidden');
+                showAuthStatus(message);
                 switchAuthTab('login'); document.getElementById('login-email').value = email;
+                const loginError = document.getElementById('login-error');
+                loginError.textContent = message; loginError.classList.remove('hidden');
             } catch (err) {
                 const friendly = {
                     'auth/too-many-requests': 'Firebase đang giới hạn số lần gửi email. Vui lòng chờ rồi thử lại.',
@@ -788,7 +790,14 @@
                 const message = createdUser
                     ? 'Tài khoản Firebase đã được tạo nhưng yêu cầu gửi email xác minh chưa thành công. Không đăng ký lại bằng email này. Tài khoản vẫn đang đăng nhập; hãy bấm “Gửi lại email xác minh” sau khi thử lại. Chi tiết: ' + detail
                     : 'Không tạo được tài khoản: ' + detail;
-                showAuthStatus(message); errBox.textContent = message; errBox.classList.remove('hidden');
+                showAuthStatus(message);
+                if (createdUser) {
+                    switchAuthTab('login'); document.getElementById('login-email').value = email;
+                    const loginError = document.getElementById('login-error');
+                    loginError.textContent = message; loginError.classList.remove('hidden');
+                } else {
+                    errBox.textContent = message; errBox.classList.remove('hidden');
+                }
             } finally {
                 if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Đăng Ký Trải Nghiệm'; }
             }
