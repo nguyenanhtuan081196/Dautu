@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.api import main
@@ -59,10 +60,10 @@ class SendVerificationEndpointTests(unittest.TestCase):
     def test_resend_cooldown_returns_retry_after(self):
         main._email_verification_send_state.clear()
         main._enforce_email_verification_resend_limit("cooldown@example.com", now=100.0)
-        with self.assertRaises(Exception) as error:
+        with self.assertRaises(HTTPException) as error:
             main._enforce_email_verification_resend_limit("cooldown@example.com", now=120.0)
-        self.assertEqual(error.exception.exception.status_code, 429)
-        self.assertIn("Retry-After", error.exception.exception.headers)
+        self.assertEqual(error.exception.status_code, 429)
+        self.assertIn("Retry-After", error.exception.headers)
         main._enforce_email_verification_resend_limit("cooldown@example.com", now=161.0)
 
     def test_missing_bearer_token_is_rejected(self):
