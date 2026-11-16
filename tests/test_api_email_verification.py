@@ -56,6 +56,15 @@ class SendVerificationEndpointTests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "already_verified")
         send_email.assert_not_called()
 
+    def test_resend_cooldown_returns_retry_after(self):
+        main._email_verification_send_state.clear()
+        main._enforce_email_verification_resend_limit("cooldown@example.com", now=100.0)
+        with self.assertRaises(Exception) as error:
+            main._enforce_email_verification_resend_limit("cooldown@example.com", now=120.0)
+        self.assertEqual(error.exception.exception.status_code, 429)
+        self.assertIn("Retry-After", error.exception.exception.headers)
+        main._enforce_email_verification_resend_limit("cooldown@example.com", now=161.0)
+
     def test_missing_bearer_token_is_rejected(self):
         response = self.client.post("/api/auth/send-verification")
         self.assertEqual(response.status_code, 401)
