@@ -8,6 +8,7 @@ from email.message import EmailMessage
 from email.utils import formataddr
 
 from google.auth.transport.requests import Request
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
@@ -43,6 +44,9 @@ def send_verification_email(recipient: str, verification_link: str) -> str:
         client_secret=client_secret,
         scopes=[GMAIL_SEND_SCOPE],
     )
+
+    # Refresh explicitly for every send; never depend on a stale in-memory token.
+    credentials.refresh(Request())
 
     safe_link = html.escape(verification_link, quote=True)
     message = EmailMessage()
