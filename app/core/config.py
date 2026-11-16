@@ -1,7 +1,7 @@
 """Environment configuration for the Dautu API infrastructure.
 
 This module centralizes infrastructure settings only. Firebase membership,
-business authorization, MongoDB repositories, and SMTP delivery remain owned
+business authorization, MongoDB repositories, and Gmail API delivery remain owned
 by the Dautu application.
 """
 from __future__ import annotations
