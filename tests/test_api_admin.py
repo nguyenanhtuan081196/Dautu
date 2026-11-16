@@ -135,7 +135,7 @@ class AdminEndpointTests(unittest.TestCase):
 
     def test_all_admin_routes_require_admin_dependency(self):
         protected=[route for route in main.app.routes if getattr(route,"path","").startswith("/api/admin/")]
-        self.assertEqual(len(protected),4)
+        self.assertEqual(len(protected),5)
         for route in protected:
             names={getattr(dep.call,"__name__",None) for dep in route.dependant.dependencies}
             self.assertIn("require_admin",names)
