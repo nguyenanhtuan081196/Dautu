@@ -8,6 +8,7 @@ import os
 import re
 import requests
 import smtplib
+import socket
 import ssl
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -237,61 +238,6 @@ def send_verification_email(
     return {"status": "sent", "message": "Verification email sent"}
 
 
-# Public browser diagnostic: reports configuration presence only. It never sends email,
-# exposes secret values, or tests SMTP authentication. Direct navigation avoids CORS.
-_TEST_DIAGNOSTIC_WINDOW_SECONDS = 60
-_TEST_DIAGNOSTIC_MAX_REQUESTS = 5
-_test_diagnostic_state: dict[str, tuple[float, int]] = {}
-_test_diagnostic_lock = threading.Lock()
-
-
-def _enforce_diagnostic_rate_limit(client_key: str, now: float | None = None) -> None:
-    current = time.monotonic() if now is None else now
-    with _test_diagnostic_lock:
-        started, count = _test_diagnostic_state.get(client_key, (current, 0))
-        if current - started >= _TEST_DIAGNOSTIC_WINDOW_SECONDS:
-            started, count = current, 0
-        if count >= _TEST_DIAGNOSTIC_MAX_REQUESTS:
-            retry_after = max(1, int(_TEST_DIAGNOSTIC_WINDOW_SECONDS - (current - started)))
-            raise HTTPException(
-                status_code=429,
-                detail="Too many diagnostic requests. Please retry shortly.",
-                headers={"Retry-After": str(retry_after)},
-            )
-        _test_diagnostic_state[client_key] = (started, count + 1)
-        if len(_test_diagnostic_state) > 2000:
-            cutoff = current - _TEST_DIAGNOSTIC_WINDOW_SECONDS
-            for key, (window_start, _) in list(_test_diagnostic_state.items()):
-                if window_start < cutoff:
-                    _test_diagnostic_state.pop(key, None)
-
-
-@router.get("/api/test-send-mail")
-def test_send_mail_diagnostic(request: Request) -> dict[str, Any]:
-    """Safe browser check of Gmail SMTP configuration; does not send a message."""
-    client_key = request.client.host if request.client else "unknown"
-    _enforce_diagnostic_rate_limit(client_key)
-    gmail_user = bool(os.getenv("GMAIL_SMTP_USER", "").strip())
-    gmail_password = bool(os.getenv("GMAIL_SMTP_APP_PASSWORD", "").strip())
-    firebase_credentials = bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip())
-    frontend_url_configured = bool(os.getenv("FRONTEND_URL", "").strip())
-    gmail_configured = gmail_user and gmail_password
-    logger.info("mail_diagnostic_completed gmail_smtp_configured=%s firebase_credentials_configured=%s frontend_url_configured=%s", gmail_configured, firebase_credentials, frontend_url_configured)
-    return {
-        "status": "ok" if gmail_configured and firebase_credentials else "needs_configuration",
-        "gmail_smtp": {
-            "username_configured": gmail_user,
-            "app_password_configured": gmail_password,
-            "configuration_complete": gmail_configured,
-        },
-        "firebase_service_account_configured": firebase_credentials,
-        "frontend_url_configured": frontend_url_configured,
-        "frontend_url_uses_default": not frontend_url_configured,
-        "email_sent": False,
-        "note": "This endpoint checks configuration presence only. It does not connect to Gmail SMTP or send email.",
-    }
-
-
 ADMIN_EMAIL = "nguyenanhtuan081196@gmail.com"
 
 
@@ -518,6 +464,98 @@ def require_admin(authorization: str | None = Header(default=None)) -> dict[str,
     if user.get("app_role") != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges are required")
     return user
+
+    
+_DIAGNOSTIC_WINDOW_SECONDS = 60
+_DIAGNOSTIC_MAX_REQUESTS = 5
+_diagnostic_state: dict[str, tuple[float, int]] = {}
+_diagnostic_lock = threading.Lock()
+
+
+def _enforce_diagnostic_rate_limit(client_key: str, now: float | None = None) -> None:
+    current = time.monotonic() if now is None else now
+    with _diagnostic_lock:
+        started, count = _diagnostic_state.get(client_key, (current, 0))
+        if current - started >= _DIAGNOSTIC_WINDOW_SECONDS:
+            started, count = current, 0
+        if count >= _DIAGNOSTIC_MAX_REQUESTS:
+            retry_after = max(1, int(_DIAGNOSTIC_WINDOW_SECONDS - (current - started)))
+            raise HTTPException(
+                status_code=429,
+                detail="Too many diagnostic requests. Please retry shortly.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        _diagnostic_state[client_key] = (started, count + 1)
+        if len(_diagnostic_state) > 2000:
+            cutoff = current - _DIAGNOSTIC_WINDOW_SECONDS
+            for key, (window_start, _) in list(_diagnostic_state.items()):
+                if window_start < cutoff:
+                    _diagnostic_state.pop(key, None)
+
+
+def _probe_gmail_smtp_connectivity(timeout: float = 5.0) -> dict[str, Any]:
+    """Check DNS, TCP/465 and TLS only; never authenticate or send a message."""
+    host, port = "smtp.gmail.com", 465
+    started = time.monotonic()
+    result: dict[str, Any] = {
+        "host": host, "port": port,
+        "dns": {"ok": False, "addresses": []},
+        "tcp": {"ok": False}, "tls": {"ok": False},
+        "email_sent": False, "smtp_authenticated": False,
+    }
+    sock = None
+    try:
+        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        addresses = list(dict.fromkeys(record[4][0] for record in records))
+        result["dns"] = {"ok": bool(addresses), "addresses": addresses}
+        if not addresses:
+            raise OSError("DNS returned no addresses")
+    except Exception as exc:
+        result["dns"].update({"error_type": type(exc).__name__, "error": str(exc)[:160]})
+        result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+        return result
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        result["tcp"] = {"ok": True}
+    except Exception as exc:
+        result["tcp"].update({"error_type": type(exc).__name__, "error": str(exc)[:160]})
+        result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+        return result
+    try:
+        context = ssl.create_default_context()
+        with context.wrap_socket(sock, server_hostname=host) as tls_sock:
+            sock = None
+            cipher = tls_sock.cipher()
+            result["tls"] = {
+                "ok": True, "version": tls_sock.version(),
+                "cipher": cipher[0] if cipher else None,
+            }
+    except Exception as exc:
+        result["tls"].update({"error_type": type(exc).__name__, "error": str(exc)[:160]})
+    finally:
+        if sock is not None:
+            sock.close()
+    result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+    return result
+
+
+@router.get("/api/admin/diagnostics/gmail-smtp")
+def gmail_smtp_connectivity_diagnostic(
+    request: Request,
+    admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin-only network probe; no SMTP AUTH and no email delivery."""
+    client_key = request.client.host if request.client else "unknown"
+    _enforce_diagnostic_rate_limit(client_key)
+    result = _probe_gmail_smtp_connectivity(timeout=5.0)
+    result["status"] = "connected" if result["tls"]["ok"] else "failed"
+    logger.info(
+        "gmail_smtp_connectivity_diagnostic status=%s dns=%s tcp=%s tls=%s elapsed_ms=%s",
+        result["status"], result["dns"]["ok"], result["tcp"]["ok"],
+        result["tls"]["ok"], result["elapsed_ms"],
+    )
+    return result
+
 
 
 
