@@ -466,6 +466,33 @@ def require_admin(authorization: str | None = Header(default=None)) -> dict[str,
     return user
 
     
+_DIAGNOSTIC_WINDOW_SECONDS = 60
+_DIAGNOSTIC_MAX_REQUESTS = 5
+_diagnostic_state: dict[str, tuple[float, int]] = {}
+_diagnostic_lock = threading.Lock()
+
+
+def _enforce_diagnostic_rate_limit(client_key: str, now: float | None = None) -> None:
+    current = time.monotonic() if now is None else now
+    with _diagnostic_lock:
+        started, count = _diagnostic_state.get(client_key, (current, 0))
+        if current - started >= _DIAGNOSTIC_WINDOW_SECONDS:
+            started, count = current, 0
+        if count >= _DIAGNOSTIC_MAX_REQUESTS:
+            retry_after = max(1, int(_DIAGNOSTIC_WINDOW_SECONDS - (current - started)))
+            raise HTTPException(
+                status_code=429,
+                detail="Too many diagnostic requests. Please retry shortly.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        _diagnostic_state[client_key] = (started, count + 1)
+        if len(_diagnostic_state) > 2000:
+            cutoff = current - _DIAGNOSTIC_WINDOW_SECONDS
+            for key, (window_start, _) in list(_diagnostic_state.items()):
+                if window_start < cutoff:
+                    _diagnostic_state.pop(key, None)
+
+
 def _probe_gmail_smtp_connectivity(timeout: float = 5.0) -> dict[str, Any]:
     """Check DNS, TCP/465 and TLS only; never authenticate or send a message."""
     host, port = "smtp.gmail.com", 465
