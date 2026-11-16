@@ -201,20 +201,17 @@ Sau khi có đủ credentials và đã xác nhận key có scope Market Data:
   leader-election để tránh nhiều collector cùng subscribe và ghi dữ liệu.
 
 
-## 9. Email verification delivery (Gmail SMTP)
+## 9. Email verification delivery (Gmail API)
 
-Email verification is delivered by the Render API through **Gmail SMTP**. Firebase Authentication remains responsible for account identity and the verified-email state; Firebase Admin SDK generates the verification action link, and Gmail only transports that message.
+Email verification is delivered by the Render API through **Gmail API over HTTPS**. Firebase Authentication remains the source of account identity and the `email_verified` state. Firebase Admin SDK generates the verification action link; Gmail API transports the message using OAuth 2.0.
 
-- Sender account: `mimo.homeserver@gmail.com`.
-- SMTP host: `smtp.gmail.com`.
-- Connection: SSL on port `465`.
-- Required Render Environment variables:
-  - `GMAIL_SMTP_USER=mimo.homeserver@gmail.com`
-  - `GMAIL_SMTP_APP_PASSWORD` — the Google App Password; store only as a Render secret.
-  - `GMAIL_FROM_NAME=Dautu`
-  - `FIREBASE_SERVICE_ACCOUNT_JSON` — Firebase Admin service-account JSON, stored only as a secret.
-  - `FRONTEND_URL` — destination URL used by Firebase's verification action link.
+Render Environment variables:
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+- `GMAIL_SENDER_EMAIL=mimo.homeserver@gmail.com`
+- Optional `GMAIL_FROM_NAME` and `FRONTEND_URL`
 
-The Gmail App Password is maintained privately by the project owner and stored only in Render Environment. This architecture document intentionally does not include instructions for creating or managing that credential.
+The API refreshes the Gmail access token before each send. The browser calls the authenticated `POST /api/auth/send-verification` endpoint; the backend derives the recipient from the Firebase ID token and never trusts a client-supplied recipient. The endpoint applies a 60-second per-account resend cooldown per API process. Backend authorization continues to reject unverified Firebase claims.
 
-No third-party Resend SDK or Resend dependency is used by the current application. Keep SMTP and Firebase credentials exclusively in Render Environment; never store secret values in Git.
+No Gmail SMTP, App Password or Resend sender is used by Dautu. Keep OAuth credentials and refresh tokens exclusively in Render Environment; never store secret values in Git.
