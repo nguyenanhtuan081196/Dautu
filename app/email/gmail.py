@@ -8,7 +8,6 @@ from email.message import EmailMessage
 from email.utils import formataddr
 
 from google.auth.transport.requests import Request
-from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
