@@ -74,7 +74,7 @@
                     Đăng Nhập Ngay
                 </button>
                 <button type="button" onclick="sendVerificationEmail()" class="w-full text-[11px] text-slate-400 hover:text-emerald-300 transition">
-                    Gửi lại email xác minh (sau khi đăng nhập)
+                    Gửi lại email xác minh
                 </button>
             </form>
 
@@ -782,28 +782,45 @@
 
         async function handleRegister(e) {
             e.preventDefault();
-            const email = document.getElementById('reg-email').value;
+            const email = document.getElementById('reg-email').value.trim();
             const pass = document.getElementById('reg-password').value;
             const errBox = document.getElementById('register-error');
+            const submitBtn = document.querySelector('#register-form button[type="submit"]');
             errBox.classList.add('hidden');
+            showAuthStatus('');
+            if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Đang tạo tài khoản…'; }
             let createdUser = null;
             try {
                 const credential = await auth.createUserWithEmailAndPassword(email, pass);
                 createdUser = credential.user;
+                showAuthStatus('Tài khoản đã được tạo. Đang gửi email xác minh…');
                 const token = await createdUser.getIdToken(true);
                 const mailResponse = await fetch(API_BASE_URL + '/api/auth/send-verification', {
                     method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }
+                    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+                    cache: 'no-store'
                 });
                 const mailPayload = await mailResponse.json().catch(() => ({}));
-                if (!mailResponse.ok) throw new Error(mailPayload.detail || 'Máy chủ không gửi được email xác minh.');
-                alert('Đăng ký thành công! Tài khoản sẽ ở quyền Guest cho đến khi Admin cấp quyền User. Hãy xác minh email để tiếp tục.');
-            } catch (err) {
-                if (createdUser) {
-                    try { await auth.signOut(); } catch (_) {}
-                    errBox.innerText = 'Tài khoản đã tạo nhưng chưa gửi được email xác minh. Anh có thể đăng nhập và yêu cầu gửi lại. Chi tiết: ' + err.message;
-                } else errBox.innerText = 'Lỗi đăng ký: ' + err.message;
+                if (!mailResponse.ok) {
+                    const error = new Error(mailPayload.detail || 'Máy chủ chưa gửi được email xác minh.');
+                    error.httpStatus = mailResponse.status;
+                    throw error;
+                }
+                const message = 'Đăng ký thành công! Email xác minh đã được máy chủ chấp nhận gửi. Hãy kiểm tra Inbox và Spam. Tài khoản ở quyền Guest cho đến khi Admin cấp quyền User.';
+                showAuthStatus(message);
+                errBox.textContent = message;
                 errBox.classList.remove('hidden');
+                switchAuthTab('login');
+                document.getElementById('login-email').value = email;
+            } catch (err) {
+                const message = createdUser
+                    ? 'Tài khoản Firebase đã được tạo nhưng email xác minh chưa gửi được. Không đăng ký lại bằng email này. Tài khoản vẫn đang đăng nhập; hãy bấm “Gửi lại email xác minh” sau khi máy chủ khôi phục. Chi tiết: ' + (err.message || 'Lỗi không xác định.')
+                    : 'Không tạo được tài khoản: ' + (err.message || 'Lỗi không xác định.');
+                showAuthStatus(message);
+                errBox.textContent = message;
+                errBox.classList.remove('hidden');
+            } finally {
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Đăng Ký Trải Nghiệm'; }
             }
         }
 
