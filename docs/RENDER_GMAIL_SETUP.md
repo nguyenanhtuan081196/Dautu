@@ -17,6 +17,8 @@ Trong service `dautu-api` → Environment, cấu hình:
 
 Giữ nguyên `FIREBASE_SERVICE_ACCOUNT_JSON`, `MONGODB_URI` và `MONGODB_DATABASE`. Không đưa bất kỳ OAuth secret hoặc refresh token nào vào GitHub, frontend hay log.
 
+Trong Google Cloud project sở hữu OAuth Client, cần bật **Gmail API**. Refresh token phải được cấp với scope `https://www.googleapis.com/auth/gmail.send` và phải thuộc chính hộp thư được khai báo ở `GMAIL_SENDER_EMAIL`.
+
 ## Cách gửi
 
 1. Người dùng đăng ký hoặc đăng nhập bằng tài khoản Firebase chưa xác minh.
