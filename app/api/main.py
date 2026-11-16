@@ -438,12 +438,14 @@ def send_verification_email(authorization: str | None = Header(default=None)) ->
             action_code_settings=action_settings,
             app=_firebase_app(),
         )
-        from app.email.gmail import send_verification_email as send_via_gmail_api
+        from app.email.gmail import safe_oauth_error_code, send_verification_email as send_via_gmail_api
         send_via_gmail_api(email, verification_link)
     except Exception as exc:
+        oauth_error_code = safe_oauth_error_code(exc)
         logger.error(
-            "verification_email_send_failed provider=gmail_api error_type=%s",
+            "verification_email_send_failed provider=gmail_api error_type=%s oauth_error_code=%s",
             type(exc).__name__,
+            oauth_error_code or "not_applicable",
         )
         raise HTTPException(
             status_code=503,

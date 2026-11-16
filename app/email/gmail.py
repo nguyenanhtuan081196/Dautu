@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import html
 import os
+import re
 from email.message import EmailMessage
 from email.utils import formataddr
 
@@ -13,6 +14,36 @@ from googleapiclient.discovery import build
 
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
+
+_OAUTH_ERROR_CODES = frozenset({
+    "invalid_grant",
+    "invalid_client",
+    "unauthorized_client",
+    "invalid_scope",
+    "unsupported_grant_type",
+    "invalid_request",
+    "temporarily_unavailable",
+    "server_error",
+})
+
+
+def safe_oauth_error_code(exc: BaseException) -> str | None:
+    """Return only a whitelisted OAuth error code; never expose response details."""
+    if type(exc).__name__ != "RefreshError":
+        return None
+
+    response_data = getattr(exc, "response_data", None)
+    candidates = [response_data, *getattr(exc, "args", ())]
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            code = candidate.get("error")
+            if isinstance(code, str) and code in _OAUTH_ERROR_CODES:
+                return code
+        elif isinstance(candidate, str):
+            for code in _OAUTH_ERROR_CODES:
+                if re.search(rf"(?<![A-Za-z0-9_]){re.escape(code)}(?![A-Za-z0-9_])", candidate):
+                    return code
+    return "unknown"
 
 
 def _required_env(name: str) -> str:
