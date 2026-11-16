@@ -19,9 +19,10 @@ class SendVerificationEndpointTests(unittest.TestCase):
     @patch("app.api.main._enforce_email_verification_resend_limit")
     @patch("app.email.gmail.send_verification_email")
     @patch("app.api.main.firebase_auth.generate_email_verification_link")
+    @patch("app.api.main._firebase_app", return_value=object())
     @patch("app.api.main._verify_firebase_token")
     def test_sends_link_only_to_authenticated_unverified_user(
-        self, verify_token, generate_link, send_email, _rate_limit
+        self, verify_token, _firebase_app, generate_link, send_email, _rate_limit
     ):
         verify_token.return_value = self.claims
         generate_link.return_value = "https://firebase.example/action?oobCode=secret"
