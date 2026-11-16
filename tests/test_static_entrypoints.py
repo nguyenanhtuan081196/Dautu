@@ -20,9 +20,10 @@ class StaticEntryPointTests(unittest.TestCase):
     def test_main_frontend_does_not_provision_memberships_in_firestore(self):
         app=(ROOT/"index.html").read_text(encoding="utf-8")
         self.assertIn("apiFetch('/api/auth/me')",app)
-        self.assertIn("createdUser.sendEmailVerification()", app)
-        self.assertIn("await user.sendEmailVerification()", app)
-        self.assertNotIn("/api/auth/send-verification", app)
+        self.assertIn("requestVerificationEmail(createdUser)", app)
+        self.assertIn("requestVerificationEmail(user)", app)
+        self.assertIn("/api/auth/send-verification", app)
+        self.assertNotIn("sendEmailVerification()", app)
         self.assertIn("window.location.href = './admin.html'",app)
         self.assertNotIn("allowed_users",app)
         self.assertNotIn("firebase.firestore",app)
