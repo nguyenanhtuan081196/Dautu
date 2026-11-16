@@ -389,6 +389,74 @@ def _ensure_another_active_admin(db: Database, target: dict[str, Any]) -> None:
 def _admin_audit(db: Database, actor: str, target: str, action: str, before: dict[str, Any], after: dict[str, Any]) -> None:
     db.users_admin_audit.insert_one({"actor_email": actor, "target_email": target, "action": action, "before": _serialize_account(before), "after": _serialize_account(after), "created_at": datetime.now(timezone.utc)})
 
+EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = 60
+_email_verification_send_state: dict[str, float] = {}
+_email_verification_send_lock = threading.Lock()
+
+
+def _enforce_email_verification_resend_limit(email: str, now: float | None = None) -> None:
+    """Apply a per-account resend cooldown within the single Render API process."""
+    current = time.monotonic() if now is None else now
+    normalized = email.strip().lower()
+    with _email_verification_send_lock:
+        previous = _email_verification_send_state.get(normalized)
+        if previous is not None:
+            elapsed = current - previous
+            if elapsed < EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS:
+                retry_after = max(1, int(EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS - elapsed))
+                raise HTTPException(
+                    status_code=429,
+                    detail="Please wait before requesting another verification email.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+        _email_verification_send_state[normalized] = current
+        if len(_email_verification_send_state) > 5000:
+            cutoff = current - 3600
+            for key, sent_at in list(_email_verification_send_state.items()):
+                if sent_at < cutoff:
+                    _email_verification_send_state.pop(key, None)
+
+
+@router.post("/api/auth/send-verification")
+def send_verification_email(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    """Send a Firebase verification action link to the authenticated account email."""
+    claims = _verify_firebase_token(authorization)
+    email = claims["email"]
+    if claims.get("email_verified") is True:
+        return {"status": "already_verified", "message": "Email address is already verified."}
+
+    _enforce_email_verification_resend_limit(email)
+    try:
+        frontend_url = os.getenv(
+            "FRONTEND_URL", "https://mimohouse.ddns.net"
+        ).strip()
+        if not frontend_url.startswith("https://"):
+            raise RuntimeError("FRONTEND_URL must be an HTTPS URL")
+        action_settings = firebase_auth.ActionCodeSettings(url=frontend_url)
+        verification_link = firebase_auth.generate_email_verification_link(
+            email,
+            action_code_settings=action_settings,
+            app=_firebase_app(),
+        )
+        from app.email.gmail import send_verification_email as send_via_gmail_api
+        send_via_gmail_api(email, verification_link)
+    except Exception as exc:
+        logger.error(
+            "verification_email_send_failed provider=gmail_api error_type=%s",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to send verification email right now. Please try again later.",
+        ) from exc
+
+    logger.info("verification_email_accepted provider=gmail_api")
+    return {
+        "status": "sent",
+        "message": "Gmail API accepted the verification email for delivery.",
+    }
+
+
 @router.get("/api/auth/me")
 def current_account(user: dict[str, Any] = Depends(require_guest)) -> dict[str, Any]:
     return {"email": user["email"], "role": user["app_role"], "status": user["account_status"],
