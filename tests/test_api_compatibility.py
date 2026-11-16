@@ -1,7 +1,7 @@
 """Regression tests for the Dautu API compatibility boundary.
 
 These tests intentionally exercise the existing Dautu application without
-replacing its MongoDB, Firebase membership, SMTP, or business logic adapters.
+replacing its MongoDB, Firebase membership, or business logic adapters.
 """
 import asyncio
 import os
@@ -21,7 +21,6 @@ class ApiCompatibilityTests(unittest.TestCase):
             for method in (getattr(route, "methods", None) or set())
         }
         expected = {
-            ("POST", "/api/auth/send-verification"),
             ("GET", "/healthz"),
             ("GET", "/readyz"),
             ("GET", "/api/status"),
@@ -35,6 +34,7 @@ class ApiCompatibilityTests(unittest.TestCase):
             ("GET", "/api/analysis/{symbol}"),
         }
         self.assertTrue(expected.issubset(routes))
+        self.assertNotIn(("POST", "/api/auth/send-verification"), routes)
 
     def test_healthz_is_live_without_database_access(self):
         with patch("app.api.main.ping_database", side_effect=TimeoutError("offline")) as ping_database:

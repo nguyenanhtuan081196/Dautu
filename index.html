@@ -718,65 +718,25 @@
 
         async function sendVerificationEmail() {
             const user = auth.currentUser;
-            if (!user) {
-                console.warn('[Dautu Auth] Email verification retry stopped: no current Firebase user.');
-                alert('Hãy đăng nhập trước, sau đó gửi lại email xác minh.');
-                return;
-            }
-
-            let stage = 'starting';
+            if (!user) { alert('Hãy đăng nhập bằng tài khoản chưa xác minh trước khi gửi lại email.'); return; }
             try {
-                if (!API_BASE_URL) throw new Error('API_BASE_URL chưa được cấu hình.');
-                console.info('[Dautu Auth] Email verification retry started.', {
-                    stage,
-                    apiBase: API_BASE_URL,
-                    uidPresent: Boolean(user.uid),
-                    emailPresent: Boolean(user.email)
-                });
-
-                stage = 'refreshing-firebase-token';
-                const token = await user.getIdToken(true);
-                if (!token) throw new Error('Firebase không trả về ID token.');
-                console.info('[Dautu Auth] Firebase ID token acquired; preparing POST.');
-
-                stage = 'sending-post';
-                const response = await fetch(API_BASE_URL + '/api/auth/send-verification', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': 'Bearer ' + token,
-                        'Accept': 'application/json'
-                    },
-                    cache: 'no-store'
-                });
-                console.info('[Dautu Auth] Verification POST response received.', {
-                    status: response.status,
-                    ok: response.ok
-                });
-
-                stage = 'reading-response';
-                const payload = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    const error = new Error(payload.detail || 'Không thể gửi email xác minh (HTTP ' + response.status + ').');
-                    error.httpStatus = response.status;
-                    throw error;
+                await user.reload();
+                if (user.emailVerified) {
+                    const message = 'Email này đã được xác minh. Anh có thể đăng nhập để sử dụng hệ thống.';
+                    showAuthStatus(message); alert(message); return;
                 }
-                console.info('[Dautu Auth] Verification email request succeeded.');
-                alert('Máy chủ đã gửi email xác minh. Anh hãy kiểm tra Inbox và Spam.');
+                await user.sendEmailVerification();
+                const message = 'Firebase Authentication đã tiếp nhận yêu cầu gửi email xác minh. Anh hãy kiểm tra Inbox, Spam hoặc Quảng cáo.';
+                showAuthStatus(message); alert(message);
             } catch (err) {
-                // Never log the Firebase ID token or other credentials.
-                console.error('[Dautu Auth] Email verification retry failed.', {
-                    stage,
-                    name: err && err.name,
-                    message: err && err.message,
-                    code: err && err.code,
-                    httpStatus: err && err.httpStatus
-                }, err);
-                const hint = stage === 'refreshing-firebase-token'
-                    ? ' Không lấy được Firebase Token; hãy đăng xuất, đăng nhập lại rồi thử.'
-                    : stage === 'sending-post' && err && err.name === 'TypeError'
-                        ? ' Trình duyệt có thể đã chặn request do CORS hoặc lỗi mạng; hãy kiểm tra Console và Network.'
-                        : '';
-                alert('Không thể gửi email xác minh: ' + (err.message || err) + hint);
+                const friendly = {
+                    'auth/too-many-requests': 'Firebase đang giới hạn số lần gửi. Vui lòng chờ một lúc rồi thử lại.',
+                    'auth/network-request-failed': 'Không thể kết nối Firebase. Kiểm tra mạng rồi thử lại.',
+                    'auth/user-not-found': 'Không tìm thấy tài khoản Firebase. Hãy đăng nhập lại.'
+                };
+                const message = friendly[err && err.code] || (err.message || 'Lỗi không xác định.');
+                showAuthStatus('Không gửi được email xác minh: ' + message);
+                alert('Không gửi được email xác minh: ' + message);
             }
         }
 
@@ -786,39 +746,29 @@
             const pass = document.getElementById('reg-password').value;
             const errBox = document.getElementById('register-error');
             const submitBtn = document.querySelector('#register-form button[type="submit"]');
-            errBox.classList.add('hidden');
-            showAuthStatus('');
+            errBox.classList.add('hidden'); showAuthStatus('');
             if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Đang tạo tài khoản…'; }
             let createdUser = null;
             try {
                 const credential = await auth.createUserWithEmailAndPassword(email, pass);
                 createdUser = credential.user;
-                showAuthStatus('Tài khoản đã được tạo. Đang gửi email xác minh…');
-                const token = await createdUser.getIdToken(true);
-                const mailResponse = await fetch(API_BASE_URL + '/api/auth/send-verification', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
-                    cache: 'no-store'
-                });
-                const mailPayload = await mailResponse.json().catch(() => ({}));
-                if (!mailResponse.ok) {
-                    const error = new Error(mailPayload.detail || 'Máy chủ chưa gửi được email xác minh.');
-                    error.httpStatus = mailResponse.status;
-                    throw error;
-                }
-                const message = 'Đăng ký thành công! Email xác minh đã được máy chủ chấp nhận gửi. Hãy kiểm tra Inbox và Spam. Tài khoản ở quyền Guest cho đến khi Admin cấp quyền User.';
-                showAuthStatus(message);
-                errBox.textContent = message;
-                errBox.classList.remove('hidden');
-                switchAuthTab('login');
-                document.getElementById('login-email').value = email;
+                showAuthStatus('Tài khoản đã được tạo. Firebase đang gửi email xác minh…');
+                await createdUser.sendEmailVerification();
+                const message = 'Đăng ký thành công! Firebase Authentication đã tiếp nhận yêu cầu gửi email xác minh. Hãy kiểm tra Inbox, Spam hoặc Quảng cáo. Tài khoản ở quyền Guest cho đến khi Admin cấp quyền User.';
+                showAuthStatus(message); errBox.textContent = message; errBox.classList.remove('hidden');
+                switchAuthTab('login'); document.getElementById('login-email').value = email;
             } catch (err) {
+                const friendly = {
+                    'auth/too-many-requests': 'Firebase đang giới hạn số lần gửi email. Vui lòng chờ rồi thử lại.',
+                    'auth/network-request-failed': 'Không thể kết nối Firebase. Kiểm tra mạng rồi thử lại.',
+                    'auth/unauthorized-continue-uri': 'Cấu hình đường dẫn xác minh Firebase chưa hợp lệ. Cần kiểm tra Authorized domains trong Firebase Console.',
+                    'auth/invalid-continue-uri': 'Đường dẫn xác minh Firebase không hợp lệ.'
+                };
+                const detail = friendly[err && err.code] || (err.message || 'Lỗi không xác định.');
                 const message = createdUser
-                    ? 'Tài khoản Firebase đã được tạo nhưng email xác minh chưa gửi được. Không đăng ký lại bằng email này. Tài khoản vẫn đang đăng nhập; hãy bấm “Gửi lại email xác minh” sau khi máy chủ khôi phục. Chi tiết: ' + (err.message || 'Lỗi không xác định.')
-                    : 'Không tạo được tài khoản: ' + (err.message || 'Lỗi không xác định.');
-                showAuthStatus(message);
-                errBox.textContent = message;
-                errBox.classList.remove('hidden');
+                    ? 'Tài khoản Firebase đã được tạo nhưng yêu cầu gửi email xác minh chưa thành công. Không đăng ký lại bằng email này. Tài khoản vẫn đang đăng nhập; hãy bấm “Gửi lại email xác minh” sau khi thử lại. Chi tiết: ' + detail
+                    : 'Không tạo được tài khoản: ' + detail;
+                showAuthStatus(message); errBox.textContent = message; errBox.classList.remove('hidden');
             } finally {
                 if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Đăng Ký Trải Nghiệm'; }
             }

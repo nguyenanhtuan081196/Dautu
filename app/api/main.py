@@ -7,11 +7,6 @@ import logging
 import os
 import re
 import requests
-import smtplib
-import socket
-import ssl
-from email.message import EmailMessage
-from email.utils import formataddr
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -28,7 +23,6 @@ from app.core.application import create_app
 from app.core.config import get_allowed_hosts, get_allowed_origins
 from app.database.mongo import ensure_indexes, get_database, ping_database
 from app.database.repositories import get_metadata
-from app.services.email_rate_limit import MongoEmailRateLimiter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -102,45 +96,6 @@ def _safe_projection(fields: tuple[str, ...]) -> dict[str, int]:
     return {"_id": 0, **{field: 1 for field in fields}}
 
 
-def _send_gmail_verification(recipient: str, verification_url: str) -> None:
-    """Deliver a Firebase-generated verification link through the configured Gmail account."""
-    smtp_user = os.getenv("GMAIL_SMTP_USER", "").strip()
-    app_password = os.getenv("GMAIL_SMTP_APP_PASSWORD", "").replace(" ", "").strip()
-    sender_name = os.getenv("GMAIL_FROM_NAME", "Dautu").strip() or "Dautu"
-    if not smtp_user or not app_password:
-        logger.error("gmail_smtp_configuration_missing username=%s app_password=%s", bool(smtp_user), bool(app_password))
-        raise RuntimeError("Gmail SMTP credentials are not configured on the server")
-
-    message = EmailMessage()
-    message["From"] = formataddr((sender_name, smtp_user))
-    message["To"] = recipient
-    message["Subject"] = "Xác minh email tài khoản Dautu"
-    message.set_content(
-        "Xin chào,\n\n"
-        "Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu. "
-        "Vui lòng mở liên kết dưới đây để xác minh:\n\n"
-        f"{verification_url}\n\n"
-        "Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.\n"
-    )
-    message.add_alternative(
-        "<p>Xin chào,</p><p>Anh/chị vừa yêu cầu xác minh email cho tài khoản Dautu.</p>"
-        f'<p><a href="{verification_url}">Xác minh email Dautu</a></p>'
-        "<p>Nếu anh/chị không thực hiện yêu cầu này, hãy bỏ qua email.</p>",
-        subtype="html",
-    )
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20, context=ssl.create_default_context()) as smtp:
-            smtp.login(smtp_user, app_password)
-            refused = smtp.send_message(message)
-            if refused:
-                logger.error("gmail_smtp_recipient_rejected recipient_count=%s", len(refused))
-                raise RuntimeError("Gmail SMTP rejected the verification recipient")
-        logger.info("gmail_smtp_email_accepted")
-    except (smtplib.SMTPException, OSError) as exc:
-        logger.error("gmail_smtp_delivery_failed error_type=%s", type(exc).__name__)
-        raise RuntimeError("Gmail SMTP could not accept the verification email") from exc
-
-
 @lru_cache(maxsize=1)
 def _firebase_app():
     raw = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
@@ -154,88 +109,6 @@ def _firebase_app():
         return firebase_admin.get_app()
     except ValueError:
         return firebase_admin.initialize_app(credentials.Certificate(service_account))
-
-
-@router.post("/api/auth/send-verification")
-def send_verification_email(
-    request: Request,
-    authorization: str | None = Header(default=None),
-) -> dict[str, str]:
-    """Generate a Firebase verification link and deliver it through Gmail SMTP.
-
-    The caller must already be signed in to Firebase, but the email does not need
-    to be verified yet. The server never accepts a recipient address from the
-    browser: it uses the email claim from the verified Firebase ID token.
-    """
-    logger.info("verification_request_received")
-    if not authorization or not authorization.startswith("Bearer "):
-        logger.warning("verification_request_rejected reason=missing_bearer_token")
-        raise HTTPException(status_code=401, detail="Missing Firebase bearer token")
-    token = authorization.removeprefix("Bearer ").strip()
-    try:
-        claims = firebase_auth.verify_id_token(token, app=_firebase_app(), check_revoked=True)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail="Authentication service unavailable") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired Firebase token") from exc
-
-    logger.info("verification_firebase_token_verified")
-    email = claims.get("email")
-    if not isinstance(email, str) or not email.strip():
-        logger.warning("verification_request_rejected reason=missing_email_claim")
-        raise HTTPException(status_code=403, detail="A valid account email is required")
-    email = email.strip().lower()
-    if claims.get("email_verified") is True:
-        raise HTTPException(status_code=409, detail="Email này đã được xác minh.")
-
-    # MongoDB is the shared source of truth across workers, instances and restarts.
-    # The counters record send attempts (including provider failures) to prevent
-    # repeated SMTP/provider work from being used to bypass the quota.
-    try:
-        MongoEmailRateLimiter(get_database()).check(
-            email=email,
-            ip_address=request.client.host if request.client else "unknown",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Unable to enforce Gmail verification rate limit")
-        raise HTTPException(
-            status_code=503,
-            detail="Dịch vụ gửi email tạm thời không khả dụng. Vui lòng thử lại sau.",
-        ) from exc
-
-    logger.info("verification_rate_limit_passed")
-    frontend_url = os.getenv("FRONTEND_URL", "https://mimohouse.ddns.net").strip()
-    try:
-        action_settings = firebase_auth.ActionCodeSettings(
-            url=frontend_url,
-            handle_code_in_app=False,
-        )
-        verification_url = firebase_auth.generate_email_verification_link(
-            email, action_code_settings=action_settings, app=_firebase_app()
-        )
-        logger.info("verification_link_generated")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("verification_link_generation_failed error_type=%s", type(exc).__name__)
-        raise HTTPException(
-            status_code=503,
-            detail="Không tạo được liên kết xác minh. Vui lòng thử lại sau.",
-        ) from exc
-
-    logger.info("verification_gmail_delivery_started")
-    try:
-        _send_gmail_verification(email, verification_url)
-    except Exception as exc:
-        logger.error("verification_gmail_delivery_failed error_type=%s", type(exc).__name__)
-        raise HTTPException(
-            status_code=503,
-            detail="Máy chủ chưa gửi được email. Vui lòng kiểm tra GMAIL_SMTP_USER và GMAIL_SMTP_APP_PASSWORD trên Render.",
-        ) from exc
-    logger.info("verification_email_sent")
-    return {"status": "sent", "message": "Verification email sent"}
 
 
 ADMIN_EMAIL = "nguyenanhtuan081196@gmail.com"
@@ -466,99 +339,6 @@ def require_admin(authorization: str | None = Header(default=None)) -> dict[str,
     return user
 
     
-_DIAGNOSTIC_WINDOW_SECONDS = 60
-_DIAGNOSTIC_MAX_REQUESTS = 5
-_diagnostic_state: dict[str, tuple[float, int]] = {}
-_diagnostic_lock = threading.Lock()
-
-
-def _enforce_diagnostic_rate_limit(client_key: str, now: float | None = None) -> None:
-    current = time.monotonic() if now is None else now
-    with _diagnostic_lock:
-        started, count = _diagnostic_state.get(client_key, (current, 0))
-        if current - started >= _DIAGNOSTIC_WINDOW_SECONDS:
-            started, count = current, 0
-        if count >= _DIAGNOSTIC_MAX_REQUESTS:
-            retry_after = max(1, int(_DIAGNOSTIC_WINDOW_SECONDS - (current - started)))
-            raise HTTPException(
-                status_code=429,
-                detail="Too many diagnostic requests. Please retry shortly.",
-                headers={"Retry-After": str(retry_after)},
-            )
-        _diagnostic_state[client_key] = (started, count + 1)
-        if len(_diagnostic_state) > 2000:
-            cutoff = current - _DIAGNOSTIC_WINDOW_SECONDS
-            for key, (window_start, _) in list(_diagnostic_state.items()):
-                if window_start < cutoff:
-                    _diagnostic_state.pop(key, None)
-
-
-def _probe_gmail_smtp_connectivity(timeout: float = 5.0) -> dict[str, Any]:
-    """Check DNS, TCP/465 and TLS only; never authenticate or send a message."""
-    host, port = "smtp.gmail.com", 465
-    started = time.monotonic()
-    result: dict[str, Any] = {
-        "host": host, "port": port,
-        "dns": {"ok": False, "addresses": []},
-        "tcp": {"ok": False}, "tls": {"ok": False},
-        "email_sent": False, "smtp_authenticated": False,
-    }
-    sock = None
-    try:
-        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        addresses = list(dict.fromkeys(record[4][0] for record in records))
-        result["dns"] = {"ok": bool(addresses), "addresses": addresses}
-        if not addresses:
-            raise OSError("DNS returned no addresses")
-    except Exception as exc:
-        result["dns"].update({"error_type": type(exc).__name__, "error": str(exc)[:160]})
-        result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
-        return result
-    try:
-        sock = socket.create_connection((host, port), timeout=timeout)
-        result["tcp"] = {"ok": True}
-    except Exception as exc:
-        result["tcp"].update({"error_type": type(exc).__name__, "error": str(exc)[:160]})
-        result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
-        return result
-    try:
-        context = ssl.create_default_context()
-        with context.wrap_socket(sock, server_hostname=host) as tls_sock:
-            sock = None
-            cipher = tls_sock.cipher()
-            result["tls"] = {
-                "ok": True, "version": tls_sock.version(),
-                "cipher": cipher[0] if cipher else None,
-            }
-    except Exception as exc:
-        result["tls"].update({"error_type": type(exc).__name__, "error": str(exc)[:160]})
-    finally:
-        if sock is not None:
-            sock.close()
-    result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
-    return result
-
-
-@router.get("/api/admin/diagnostics/gmail-smtp")
-def gmail_smtp_connectivity_diagnostic(
-    request: Request,
-    admin: dict[str, Any] = Depends(require_admin),
-) -> dict[str, Any]:
-    """Admin-only network probe; no SMTP AUTH and no email delivery."""
-    client_key = request.client.host if request.client else "unknown"
-    _enforce_diagnostic_rate_limit(client_key)
-    result = _probe_gmail_smtp_connectivity(timeout=5.0)
-    result["status"] = "connected" if result["tls"]["ok"] else "failed"
-    logger.info(
-        "gmail_smtp_connectivity_diagnostic status=%s dns=%s tcp=%s tls=%s elapsed_ms=%s",
-        result["status"], result["dns"]["ok"], result["tcp"]["ok"],
-        result["tls"]["ok"], result["elapsed_ms"],
-    )
-    return result
-
-
-
-
 def db_dependency() -> Database:
     try:
         return get_database()
@@ -1024,7 +804,7 @@ app = create_app(
 @app.middleware("http")
 async def log_http_request(request: Request, call_next):
     """Log mail-related requests and CORS preflight without flooding routine API logs."""
-    tracked_paths = {"/api/auth/send-verification", "/api/test-send-mail"}
+    tracked_paths = {"/api/test-send-mail"}
     if request.method != "OPTIONS" and request.url.path not in tracked_paths:
         return await call_next(request)
     started = time.monotonic()
