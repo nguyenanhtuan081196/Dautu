@@ -539,8 +539,19 @@ class AdminExtendRequest(BaseModel):
     days: int = Field(ge=1, le=3650)
 
 def _serialize_account(account: dict[str, Any]) -> dict[str, Any]:
-    fields = ("email", "role", "status", "created_at", "expired_at", "updated_at", "created_source")
-    return {key: (account.get(key).isoformat() if isinstance(account.get(key), datetime) else account.get(key)) for key in fields}
+    """Return only safe account fields for the Admin UI and audit log."""
+    fields = (
+        "email", "role", "status", "created_at", "expired_at", "updated_at",
+        "created_source", "email_verified", "firebase_created_at",
+    )
+    return {
+        key: (
+            account.get(key).isoformat()
+            if isinstance(account.get(key), datetime)
+            else account.get(key)
+        )
+        for key in fields
+    }
 
 def _admin_target(db: Database, email: str) -> dict[str, Any]:
     normalized = email.strip().lower()
@@ -566,11 +577,88 @@ def current_account(user: dict[str, Any] = Depends(require_guest)) -> dict[str, 
             "created_at": user.get("account_created_at").isoformat() if isinstance(user.get("account_created_at"), datetime) else None,
             "expired_at": user.get("account_expired_at").isoformat() if isinstance(user.get("account_expired_at"), datetime) else None}
 
+def _firebase_user_created_at(firebase_user: Any) -> datetime | None:
+    metadata = getattr(firebase_user, "user_metadata", None)
+    timestamp_ms = getattr(metadata, "creation_timestamp", None)
+    if not isinstance(timestamp_ms, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _list_firebase_users(limit: int) -> dict[str, Any]:
+    """Read Firebase Auth as the source of truth for email verification state."""
+    users: dict[str, Any] = {}
+    page_token = None
+    try:
+        while len(users) < limit:
+            kwargs: dict[str, Any] = {
+                "max_results": min(1000, max(1, limit - len(users))),
+                "app": _firebase_app(),
+            }
+            if page_token:
+                kwargs["page_token"] = page_token
+            page = firebase_auth.list_users(**kwargs)
+            for firebase_user in page.users:
+                email = getattr(firebase_user, "email", None)
+                if isinstance(email, str) and email.strip():
+                    users[email.strip().lower()] = firebase_user
+                    if len(users) >= limit:
+                        break
+            page_token = getattr(page, "next_page_token", None)
+            if not page_token:
+                break
+    except Exception as exc:
+        logger.error("admin_firebase_user_list_failed error_type=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=503, detail="Firebase user directory is temporarily unavailable"
+        ) from exc
+    return users
+
+
 @router.get("/api/admin/users")
 def admin_list_users(_: dict[str, Any] = Depends(require_admin), db: Database = Depends(db_dependency),
                      limit: int = Query(default=500, ge=1, le=1000)) -> list[dict[str, Any]]:
-    rows = db.users.find({}, {"_id": 0, "email": 1, "role": 1, "status": 1, "created_at": 1, "expired_at": 1, "updated_at": 1, "created_source": 1}).sort("email", 1).limit(limit)
-    return [_serialize_account(row) for row in rows]
+    """List registered Firebase accounts and enrich them with Dautu roles."""
+    firebase_users = _list_firebase_users(limit)
+    projection = {
+        "_id": 0, "email": 1, "role": 1, "status": 1, "created_at": 1,
+        "expired_at": 1, "updated_at": 1, "created_source": 1,
+    }
+    mongo_rows = list(db.users.find({}, projection).limit(limit))
+    accounts = {
+        row["email"].strip().lower(): dict(row)
+        for row in mongo_rows
+        if isinstance(row.get("email"), str) and row["email"].strip()
+    }
+
+    # Firebase-only accounts are important: newly registered users may not yet
+    # have called an authenticated API endpoint, so MongoDB has no row for them.
+    for email, firebase_user in firebase_users.items():
+        account = accounts.setdefault(email, {
+            "email": email,
+            "role": "guest",
+            "status": "active",
+            "created_source": "firebase_guest",
+        })
+        firebase_created_at = _firebase_user_created_at(firebase_user)
+        if not account.get("created_at") and firebase_created_at:
+            account["created_at"] = firebase_created_at
+        account["email_verified"] = bool(
+            getattr(firebase_user, "email_verified", False)
+        )
+        account["firebase_created_at"] = firebase_created_at
+
+    # A MongoDB-only row can be a stale or legacy record. Do not claim its
+    # verification status; make that distinction visible in the Admin UI.
+    for email, account in accounts.items():
+        account.setdefault("email_verified", None)
+        account.setdefault("firebase_created_at", None)
+
+    ordered = sorted(accounts.values(), key=lambda row: row.get("email", ""))
+    return [_serialize_account(row) for row in ordered[:limit]]
 
 @router.patch("/api/admin/users/{email}/status")
 def admin_update_status(payload: AdminStatusUpdate, email: str = Path(..., min_length=3, max_length=254),

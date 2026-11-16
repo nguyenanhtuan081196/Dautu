@@ -1,5 +1,6 @@
 """Tests for Admin account management endpoints and invariants."""
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -47,11 +48,49 @@ class AdminEndpointTests(unittest.TestCase):
         self.actor={"email":"admin@example.com","app_role":"admin"}
 
     def test_list_users_returns_allowlisted_account_fields(self):
-        rows=main.admin_list_users(self.actor,self.db,500)
+        empty_page=SimpleNamespace(users=[],next_page_token=None)
+        with patch.object(main,"_firebase_app",return_value=object()), patch.object(
+            main.firebase_auth,"list_users",return_value=empty_page
+        ):
+            rows=main.admin_list_users(self.actor,self.db,500)
         self.assertEqual(len(rows),2)
         self.assertEqual(rows[0]["email"],"admin@example.com")
+        self.assertIsNone(rows[0]["email_verified"])
         self.assertNotIn("_id",rows[0])
         self.assertNotIn("firebase_uid",rows[0])
+
+    def test_list_users_includes_unverified_firebase_only_registrations(self):
+        created_ms= int(datetime.now(timezone.utc).timestamp()*1000)
+        firebase_records=[
+            SimpleNamespace(
+                email="new@example.com",email_verified=False,uid="new-uid",
+                user_metadata=SimpleNamespace(creation_timestamp=created_ms),
+            ),
+            SimpleNamespace(
+                email="admin@example.com",email_verified=True,uid="admin-uid",
+                user_metadata=SimpleNamespace(creation_timestamp=created_ms),
+            ),
+        ]
+        page=SimpleNamespace(users=firebase_records,next_page_token=None)
+        with patch.object(main,"_firebase_app",return_value=object()), patch.object(
+            main.firebase_auth,"list_users",return_value=page
+        ):
+            rows=main.admin_list_users(self.actor,self.db,500)
+        new_user=next(row for row in rows if row["email"]=="new@example.com")
+        admin=next(row for row in rows if row["email"]=="admin@example.com")
+        self.assertEqual(new_user["role"],"guest")
+        self.assertEqual(new_user["status"],"active")
+        self.assertFalse(new_user["email_verified"])
+        self.assertIsNotNone(new_user["firebase_created_at"])
+        self.assertTrue(admin["email_verified"])
+
+    def test_firebase_directory_failure_returns_service_unavailable(self):
+        with patch.object(main,"_firebase_app",return_value=object()), patch.object(
+            main.firebase_auth,"list_users",side_effect=RuntimeError("provider unavailable")
+        ):
+            with self.assertRaises(HTTPException) as error:
+                main.admin_list_users(self.actor,self.db,500)
+        self.assertEqual(error.exception.status_code,503)
 
     def test_lock_unlock_and_audit_user(self):
         locked=main.admin_update_status(main.AdminStatusUpdate(status="locked"),"member@example.com",self.actor,self.db)
