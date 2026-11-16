@@ -34,7 +34,7 @@ class ApiCompatibilityTests(unittest.TestCase):
             ("GET", "/api/analysis/{symbol}"),
         }
         self.assertTrue(expected.issubset(routes))
-        self.assertNotIn(("POST", "/api/auth/send-verification"), routes)
+        self.assertIn(("POST", "/api/auth/send-verification"), routes)
 
     def test_healthz_is_live_without_database_access(self):
         with patch("app.api.main.ping_database", side_effect=TimeoutError("offline")) as ping_database:
