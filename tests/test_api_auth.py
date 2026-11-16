@@ -326,7 +326,6 @@ class RequireUserTests(unittest.TestCase):
             if getattr(route, "path", "").startswith("/api/")
             and getattr(route, "path", "") not in {
                 "/api/auth/send-verification",
-                "/api/admin/diagnostics/gmail-smtp",
             }
         ]
         self.assertGreater(len(data_routes), 0)

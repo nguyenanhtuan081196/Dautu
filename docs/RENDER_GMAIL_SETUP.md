@@ -1,46 +1,47 @@
-# Cấu hình gửi email xác minh qua Gmail SMTP trên Render
+# Cấu hình Gmail API gửi email xác minh trên Render
 
-Website không gửi email trực tiếp từ trình duyệt. Firebase Authentication xác thực phiên; Render kiểm tra ID token và lấy email người nhận từ claim đã xác thực; Firebase Admin SDK tạo liên kết xác minh; Render gửi thư qua SMTP của Gmail.
+Dautu dùng Firebase Authentication để quản lý tài khoản, mật khẩu và trạng thái `email_verified`. API trên Render tạo liên kết xác minh bằng Firebase Admin SDK, sau đó gửi email bằng Gmail API qua HTTPS. Người nhận bấm liên kết Firebase để xác minh; backend tiếp tục kiểm tra claim `email_verified` trước khi cho truy cập dữ liệu.
 
-Firebase vẫn quản lý tài khoản, mật khẩu và trạng thái email_verified. Gmail chỉ vận chuyển email; người nhận bấm liên kết Firebase để xác minh.
+## Biến môi trường Render
 
-## 1. Tài khoản gửi thư
+Trong service `dautu-api` → Environment, cấu hình:
 
-Hệ thống hiện sử dụng tài khoản gửi thư đã được chủ dự án cấu hình: `mimo.homeserver@gmail.com`. Thông tin xác thực SMTP được quản lý riêng tư và lưu trong Render Environment; tài liệu này không chứa hướng dẫn tạo hoặc quản lý App Password.
-
-## 2. Cấu hình Render
-
-Mở Render → service dautu-api → Environment. Thêm:
-
-| Key | Value |
+| Key | Mục đích |
 | --- | --- |
-| GMAIL_SMTP_USER | mimo.homeserver@gmail.com |
-| GMAIL_SMTP_APP_PASSWORD | App Password 16 ký tự (có thể nhập liền, không dấu cách) |
-| GMAIL_FROM_NAME | Dautu |
-| FRONTEND_URL | https://mimohouse.ddns.net |
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID |
+| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 Client Secret |
+| `GOOGLE_REFRESH_TOKEN` | Refresh token được cấp với scope Gmail send |
+| `GMAIL_SENDER_EMAIL` | `mimo.homeserver@gmail.com` |
+| `GMAIL_FROM_NAME` | Tên hiển thị, mặc định `Dautu` |
+| `FRONTEND_URL` | URL HTTPS của website được Firebase Authorized Domains cho phép |
 
-Giữ nguyên FIREBASE_SERVICE_ACCOUNT_JSON, MONGODB_URI và MONGODB_DATABASE. SMTP dùng smtp.gmail.com, SSL port 465. Không cần cài thêm thư viện Python.
+Giữ nguyên `FIREBASE_SERVICE_ACCOUNT_JSON`, `MONGODB_URI` và `MONGODB_DATABASE`. Không đưa bất kỳ OAuth secret hoặc refresh token nào vào GitHub, frontend hay log.
 
-Sau khi cấu hình, lưu và để Render restart/redeploy service.
+Trong Google Cloud project sở hữu OAuth Client, cần bật **Gmail API**. Refresh token phải được cấp với scope `https://www.googleapis.com/auth/gmail.send` và phải thuộc chính hộp thư được khai báo ở `GMAIL_SENDER_EMAIL`.
 
-Bản triển khai hiện tại không sử dụng Resend. Sau khi xác nhận Gmail SMTP hoạt động, các biến cũ `RESEND_API_KEY` và `RESEND_FROM_EMAIL` không còn cần thiết và cần được xóa khỏi Render Environment.
+## Cách gửi
 
-## 3. Kiểm tra
+1. Người dùng đăng ký hoặc đăng nhập bằng tài khoản Firebase chưa xác minh.
+2. Frontend gửi ID token Firebase đến `POST /api/auth/send-verification`.
+3. Backend lấy email từ claim đã xác thực; client không được tự chỉ định người nhận.
+4. Firebase Admin SDK tạo email verification action link.
+5. Gmail API dùng OAuth refresh token để lấy access token mới rồi gửi MIME email qua HTTPS.
+6. Khi người dùng mở liên kết, Firebase cập nhật `email_verified`. API vẫn từ chối tài khoản có claim chưa xác minh.
 
-1. Nếu cần kiểm tra nhanh biến cấu hình, mở `https://dautu-api.onrender.com/api/test-send-mail`. Endpoint chỉ báo các biến Gmail/Firebase có được khai báo hay không; endpoint không kết nối Gmail, không xác thực App Password và không gửi email.
-2. Dùng tài khoản thử nghiệm do anh kiểm soát, đăng nhập và bấm Gửi lại email xác minh đúng một lần.
-3. Mở Render Logs, tìm gmail_smtp_email_accepted hoặc gmail_smtp_delivery_failed.
-4. Kiểm tra Inbox và Spam của địa chỉ nhận thư.
-5. Mở liên kết xác minh, sau đó đăng nhập/tải lại trạng thái. Backend vẫn từ chối tài khoản chưa xác minh bằng HTTP 403.
+Endpoint giới hạn gửi lại ở mức một yêu cầu mỗi tài khoản trong 60 giây trên mỗi tiến trình API. Đây là lớp chống gửi lặp cơ bản; nếu sau này chạy nhiều instance, cần chuyển bộ đếm sang MongoDB Atlas hoặc kho dùng chung.
 
-Log gmail_smtp_email_accepted nghĩa là Gmail SMTP đã chấp nhận thư, không đảm bảo thư chắc chắn vào Inbox; cần kiểm tra hộp thư nhận.
+## Kiểm tra sau deploy
 
-## 4. Giới hạn gửi thư
+1. Xác nhận Render Environment có đủ các biến ở trên; không chia sẻ giá trị secret.
+2. Chờ Render deploy thành công và kiểm tra `/healthz`.
+3. Đăng nhập bằng một tài khoản thử nghiệm chưa xác minh rồi bấm **Gửi lại email xác minh**.
+4. Kiểm tra Inbox, Spam và Quảng cáo của email nhận.
+5. Mở liên kết xác minh, đăng nhập lại và kiểm tra truy cập Dautu.
 
-Gmail áp dụng giới hạn gửi theo tài khoản và có thể lọc/chặn thư bất thường. Tài liệu Google nêu giới hạn SMTP tối đa 500 thư/ngày cho Gmail cá nhân và 2.000 thư/ngày cho Google Workspace trả phí; giới hạn có thể thay đổi theo chính sách tài khoản.
+Log `verification_email_accepted provider=gmail_api` nghĩa là Gmail API đã chấp nhận request gửi thư, không đảm bảo thư chắc chắn nằm trong Inbox. Log lỗi chỉ ghi loại exception, không ghi token, nội dung email hoặc địa chỉ người nhận.
 
-Bộ đếm MongoDB Atlas hiện có vẫn được giữ nguyên:
-- Mỗi tài khoản: 1 lần thử/phút, tối đa 3 lần/giờ.
-- Mỗi IP: 10 lần/phút, 30 lần/giờ.
-- Request vượt giới hạn nhận HTTP 429 và Retry-After.
-- MongoDB là nguồn lưu bộ đếm dùng chung qua restart.
+## Vận hành và giới hạn
+
+Gmail áp dụng giới hạn gửi và chống lạm dụng theo tài khoản. Không dùng Gmail cá nhân để gửi email marketing hoặc gửi hàng loạt; luồng này chỉ dành cho email xác minh giao dịch của Dautu. Nếu lưu lượng đăng ký tăng đáng kể, nên chuyển sang nhà cung cấp email giao dịch chuyên dụng.
+
+Dautu không sử dụng Gmail SMTP, App Password hoặc Resend. Các biến SMTP/Resend cũ nếu còn trong Render Environment không được ứng dụng này đọc và có thể được xóa sau khi xác nhận deploy mới hoạt động.

@@ -95,9 +95,9 @@ The root `login.html` is a legacy URL that redirects to the canonical `index.htm
 - Xóa người dùng khỏi Firebase Authentication là thao tác riêng, cần backend tin cậy dùng Firebase Admin SDK; không thực hiện trực tiếp từ trình duyệt.
 
 
-## Gửi email xác minh qua Gmail trên Render
+## Gửi email xác minh qua Gmail API trên Render
 
-Hệ thống gửi email xác minh qua Gmail SMTP từ API Render. Cách tạo Google App Password, cấu hình biến môi trường và kiểm tra sau triển khai được hướng dẫn tại `docs/RENDER_GMAIL_SETUP.md`.
+API Render tạo liên kết xác minh bằng Firebase Admin SDK và gửi thư qua Gmail API (HTTPS) bằng OAuth 2.0 refresh token. Cấu hình các biến `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `GMAIL_SENDER_EMAIL` và `FRONTEND_URL` trong Render Environment. Không sử dụng SMTP, App Password hoặc Resend. Xem `docs/RENDER_GMAIL_SETUP.md` để biết chi tiết.
 
 ## Shared server-platform dependency
 
