@@ -716,25 +716,45 @@
             }
         }
 
+        async function requestVerificationEmail(user) {
+            if (!API_BASE_URL) {
+                throw new Error('API chưa được cấu hình. Vui lòng thiết lập DAUTU_API_BASE_URL.');
+            }
+            const token = await user.getIdToken(true);
+            const response = await fetch(new URL('/api/auth/send-verification', API_BASE_URL).toString(), {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + token,
+                    'Accept': 'application/json'
+                },
+                cache: 'no-store'
+            });
+            let payload = {};
+            try { payload = await response.json(); } catch (_) {}
+            if (!response.ok) {
+                const error = new Error(payload.detail || 'Không gửi được email xác minh (' + response.status + ').');
+                error.statusCode = response.status;
+                throw error;
+            }
+            return payload;
+        }
+
         async function sendVerificationEmail() {
-            const user = auth.currentUser;
+            let user = auth.currentUser;
             if (!user) { alert('Hãy đăng nhập bằng tài khoản chưa xác minh trước khi gửi lại email.'); return; }
             try {
                 await user.reload();
+                user = auth.currentUser;
+                if (!user) throw new Error('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.');
                 if (user.emailVerified) {
                     const message = 'Email này đã được xác minh. Anh có thể đăng nhập để sử dụng hệ thống.';
                     showAuthStatus(message); alert(message); return;
                 }
-                await user.sendEmailVerification();
-                const message = 'Firebase Authentication đã tiếp nhận yêu cầu gửi email xác minh. Anh hãy kiểm tra Inbox, Spam hoặc Quảng cáo.';
+                const result = await requestVerificationEmail(user);
+                const message = result.message || 'Dautu đã gửi yêu cầu xác minh qua Gmail. Hãy kiểm tra Inbox, Spam hoặc Quảng cáo.';
                 showAuthStatus(message); alert(message);
             } catch (err) {
-                const friendly = {
-                    'auth/too-many-requests': 'Firebase đang giới hạn số lần gửi. Vui lòng chờ một lúc rồi thử lại.',
-                    'auth/network-request-failed': 'Không thể kết nối Firebase. Kiểm tra mạng rồi thử lại.',
-                    'auth/user-not-found': 'Không tìm thấy tài khoản Firebase. Hãy đăng nhập lại.'
-                };
-                const message = friendly[err && err.code] || (err.message || 'Lỗi không xác định.');
+                const message = err.message || 'Lỗi không xác định.';
                 showAuthStatus('Không gửi được email xác minh: ' + message);
                 alert('Không gửi được email xác minh: ' + message);
             }
@@ -752,9 +772,9 @@
             try {
                 const credential = await auth.createUserWithEmailAndPassword(email, pass);
                 createdUser = credential.user;
-                showAuthStatus('Tài khoản đã được tạo. Firebase đang gửi email xác minh…');
-                await createdUser.sendEmailVerification();
-                const message = 'Đăng ký thành công! Firebase Authentication đã tiếp nhận yêu cầu gửi email xác minh. Hãy kiểm tra Inbox, Spam hoặc Quảng cáo. Tài khoản ở quyền Guest cho đến khi Admin cấp quyền User.';
+                showAuthStatus('Tài khoản đã được tạo. Dautu đang gửi email xác minh qua Gmail…');
+                const result = await requestVerificationEmail(createdUser);
+                const message = 'Đăng ký thành công! ' + (result.message || 'Email xác minh đã được gửi qua Gmail.') + ' Tài khoản ở quyền Guest cho đến khi Admin cấp quyền User.';
                 showAuthStatus(message); errBox.textContent = message; errBox.classList.remove('hidden');
                 switchAuthTab('login'); document.getElementById('login-email').value = email;
             } catch (err) {
